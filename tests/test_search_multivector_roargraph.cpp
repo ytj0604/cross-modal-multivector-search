@@ -76,6 +76,10 @@ int main(int argc, char **argv) {
     uint32_t k;
     std::string evaluation_save_path = "";
     std::string evaluation_save_prefix = "";
+    uint32_t max_pq;
+    uint32_t min_pq;
+    uint32_t max_pq_size_budget;
+    uint32_t query_multivector_size;
 
     po::options_description desc{"Arguments"};
     try {
@@ -96,8 +100,8 @@ int main(int argc, char **argv) {
         desc.add_options()("projection_index_save_path",
                            po::value<std::string>(&projection_index_save_file)->required(),
                            "Path prefix for saving projetion index file components");
-        desc.add_options()("L_pq", po::value<std::vector<uint32_t>>(&L_vec)->multitoken()->required(),
-                           "Priority queue length for searching");
+        // desc.add_options()("L_pq", po::value<std::vector<uint32_t>>(&L_vec)->multitoken()->required(),
+        //                    "Priority queue length for searching");
         desc.add_options()("k", po::value<uint32_t>(&k)->default_value(1)->required(), "k nearest neighbors");
         desc.add_options()("evaluation_save_path", po::value<std::string>(&evaluation_save_path),
                            "Path prefix for saving evaluation results");
@@ -106,8 +110,10 @@ int main(int argc, char **argv) {
                            "omp_get_num_procs())");
         desc.add_options()("evaluation_save_prefix", po::value<std::string>(&evaluation_save_prefix),
                            "Path prefix for saving evaluation results");
-
-
+        desc.add_options()("max_pq", po::value<uint32_t>(&max_pq)->default_value(2000), "max priority queue length");
+        desc.add_options()("min_pq", po::value<uint32_t>(&min_pq)->default_value(5), "min priority queue length");
+        desc.add_options()("max_pq_size_budget", po::value<uint32_t>(&max_pq_size_budget)->default_value(10000), "max priority queue size budget");
+        desc.add_options()("query_multivector_size", po::value<uint32_t>(&query_multivector_size)->default_value(4), "query multivector size");
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, desc), vm);
         if (vm.count("help")) {
@@ -134,7 +140,9 @@ int main(int argc, char **argv) {
     float *query_data = nullptr;
     efanna2e::load_data<float>(query_file.c_str(), q_pts, q_dim, query_data);
     float *aligned_query_data = efanna2e::data_align(query_data, q_pts, q_dim);
-
+    assert(q_pts % query_multivector_size == 0);
+    q_pts = q_pts / query_multivector_size;
+    std::cout << "q_pts: " << q_pts << std::endl;
     uint32_t gt_pts, gt_dim;
     uint32_t *gt_ids = nullptr;
     float *gt_dists = nullptr;
@@ -174,74 +182,32 @@ int main(int argc, char **argv) {
             efanna2e::normalize<float>(aligned_query_data + i * q_dim, q_dim);
         }
     }
-    index.InitVisitedListPool(num_threads);
+    index.InitVisitedListPool(query_multivector_size);
 
     // Search
     std::cout << "k: " << k << std::endl;
     uint32_t *res = new uint32_t[q_pts * k];
     memset(res, 0, sizeof(uint32_t) * q_pts * k);
-    std::vector<std::vector<float>> res_dists(q_pts, std::vector<float>(k, 0.0));
+    // std::vector<std::vector<float>> res_dists(q_pts, std::vector<float>(k, 0.0));
     uint32_t *projection_cmps_vec = (uint32_t *)aligned_alloc(4, sizeof(uint32_t) * q_pts);
     memset(projection_cmps_vec, 0, sizeof(uint32_t) * q_pts);
     uint32_t *hops_vec = (uint32_t *)aligned_alloc(4, sizeof(uint32_t) * q_pts);
     float *projection_latency_vec = (float *)aligned_alloc(4, sizeof(float) * q_pts);
     memset(projection_latency_vec, 0, sizeof(float) * q_pts);
     std::ofstream evaluation_out;
+    std::vector<std::vector<unsigned int>> indices(query_multivector_size);
+    for (auto &ind : indices) {
+        ind.reserve(max_pq);
+    }
+    std::vector<std::vector<float>> res_dists(query_multivector_size);
+    for (auto &res_dist : res_dists) {
+        res_dist.reserve(max_pq);
+    }
     // if (!evaluation_save_path.empty()) {
     //     evaluation_out.open(evaluation_save_path, std::ios::out);
     // }
     std::cout << "Using thread: " << num_threads << std::endl;
     std::cout << "L_pq" << "\t\tQPS" << "\t\t\tavg_visited" << "\tmean_latency" << "\trecall@" << k << "\tavg_hops" << std::endl;
-//     for (uint32_t L_pq : L_vec) {
-//         if (k > L_pq) {
-//             std::cout << "L_pq must greater or equal than k" << std::endl;
-//             exit(1);
-//         }
-//         parameters.Set<uint32_t>("L_pq", L_pq);
-//         //pre test good
-//         for (size_t i = 0; i < 100; ++i) {
-//             index.SearchRoarGraph(aligned_query_data + i * q_dim, k, i, parameters, res + i * k, res_dists[i]);
-//         }
-//         // record the search time
-//         auto start = std::chrono::high_resolution_clock::now();
-// #pragma omp parallel for schedule(dynamic, 1)
-//         for (size_t i = 0; i < q_pts; ++i) {
-//             auto ret_val = index.SearchRoarGraph(aligned_query_data + i * q_dim, k, i, parameters, res + i * k, res_dists[i]);
-//             projection_cmps_vec[i] = ret_val.first;
-//             hops_vec[i] = ret_val.second;
-
-//         }
-//         auto end = std::chrono::high_resolution_clock::now();
-
-//         auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-//         float qps = (float)q_pts / ((float)diff / 1000.0);
-//         float recall = ComputeRecall(q_pts, k, gt_dim, res, gt_ids);
-//         float avg_projection_cmps = 0.0;
-//         for (size_t i = 0; i < q_pts; ++i) {
-//             avg_projection_cmps += projection_cmps_vec[i];
-//         }
-//         avg_projection_cmps /= q_pts;
-
-//         float avg_hops = 0.0;
-//         for (size_t i = 0; i < q_pts; ++i) {
-//             avg_hops += hops_vec[i];
-//         }
-//         avg_hops /= (float)q_pts;
-//         float avg_projection_latency = 0.0;
-//         for (size_t i = 0; i < q_pts; ++i) {
-//             avg_projection_latency += projection_latency_vec[i];
-//         }
-//         avg_projection_latency /= (float)q_pts;
-//         std::cout << L_pq << "\t\t" << qps << "\t\t" << avg_projection_cmps << "\t\t"
-//                   << ((float)diff / q_pts) << "\t\t" << recall << "\t\t" << avg_hops << std::endl;
-//         if (evaluation_out.is_open()) {
-//             evaluation_out << L_pq << "," << qps << "," << avg_projection_cmps << "," << ((float)diff / q_pts) << ","
-//                            << recall << "," << avg_hops << std::endl;
-//         }
-//     }
-//     if (evaluation_out.is_open()) {
-//         evaluation_out.close();
-//     }
 
     if (!evaluation_save_path.empty()) {
         // Open evaluation file in append mode
@@ -254,82 +220,102 @@ int main(int argc, char **argv) {
         // Write the name of the projection index file to the evaluation file
         evaluation_out << "Index File: " << projection_index_save_file << "\n";
     }
-    for (uint32_t L_pq : L_vec) {
-        if (k > L_pq) {
-            std::cerr << "L_pq must be greater or equal to k" << std::endl;
-            return -1;
+
+    parameters.Set<uint32_t>("min_pq", min_pq);
+    parameters.Set<uint32_t>("max_pq", max_pq);
+    parameters.Set<uint32_t>("max_pq_size_budget", max_pq_size_budget);
+
+
+    // Construct the evaluation file path dynamically
+    std::string evaluation_file_path =
+        evaluation_save_prefix + "_" + std::to_string(max_pq_size_budget) + ".tsv";
+
+    std::ofstream tsv_out(evaluation_file_path, std::ios::out);
+    if (!tsv_out.is_open()) {
+        std::cerr << "Error opening output file: " << evaluation_file_path << std::endl;
+        return -1;
+    }
+
+    // Start measuring total time
+    auto start = std::chrono::high_resolution_clock::now();
+
+    std::vector<const float *> queries;
+    queries.resize(query_multivector_size);
+
+#pragma omp parallel for schedule(dynamic, 1)
+    for (size_t i = 0; i < q_pts; ++i) {
+        // Start timing for the individual query
+        auto query_start = std::chrono::high_resolution_clock::now();
+
+        // Set the query
+        for(int32_t j = 0; j < query_multivector_size; j++) {
+            queries[j] = aligned_query_data + i * q_dim * query_multivector_size + j * q_dim;
         }
 
-        parameters.Set<uint32_t>("L_pq", L_pq);
-
-        // Construct the evaluation file path dynamically
-        std::string evaluation_file_path =
-            evaluation_save_prefix + "_" + std::to_string(L_pq) + ".tsv";
-
-        std::ofstream tsv_out(evaluation_file_path, std::ios::out);
-        if (!tsv_out.is_open()) {
-            std::cerr << "Error opening output file: " << evaluation_file_path << std::endl;
-            return -1;
+        for(auto &ind : indices) {
+            ind.clear();
         }
+        for (auto &res_dist : res_dists) {
+            res_dist.clear();
+        }
+        // Perform the search for the current query
+        auto ret_val = index.SearchMultivectorOnRoarGraph(queries, k, i, parameters, indices, res_dists);
 
-        // Start measuring total time
-        auto start = std::chrono::high_resolution_clock::now();
+        // End timing for the individual query
+        auto query_end = std::chrono::high_resolution_clock::now();
+        auto query_diff = std::chrono::duration_cast<std::chrono::microseconds>(query_end - query_start).count();
+        double query_time_seconds = static_cast<double>(query_diff) / 1'000'000;  // Convert to seconds with precision
 
-    #pragma omp parallel for schedule(dynamic, 1)
-        for (size_t i = 0; i < q_pts; ++i) {
-            // Start timing for the individual query
-            auto query_start = std::chrono::high_resolution_clock::now();
+        // Save the results
+        // projection_cmps_vec[i] = ret_val.first;
+        // hops_vec[i] = ret_val.second;
 
-            // Perform the search for the current query
-            auto ret_val = index.SearchRoarGraph(aligned_query_data + i * q_dim, k, i, parameters, res + i * k, res_dists[i]);
-
-            // End timing for the individual query
-            auto query_end = std::chrono::high_resolution_clock::now();
-            auto query_diff = std::chrono::duration_cast<std::chrono::microseconds>(query_end - query_start).count();
-            double query_time_seconds = static_cast<double>(query_diff) / 1'000'000;  // Convert to seconds with precision
-
-            // Save the results
-            projection_cmps_vec[i] = ret_val.first;
-            hops_vec[i] = ret_val.second;
-
-            // Write the results to the TSV file
-        #pragma omp critical
-            {
-                tsv_out << i << "\t" << query_time_seconds;  // Write the query execution time in microseconds
-                for (int j = 0; j < k; j++) {  // Adjusted for min-heap
-                    tsv_out << "\t" << res[i * k + j] << "\t" << -res_dists[i][j];
+        // Write the results to the TSV file
+    #pragma omp critical
+        {
+            tsv_out << i << "\t" << query_time_seconds << "\n";  // Write the query execution time in microseconds
+            for(int32_t j = 0; j < query_multivector_size; j++) {
+                tsv_out << j;
+                for (int k = 0; k < indices[j].size(); k++) {
+                    tsv_out << "\t" << indices[j][k] << "\t" << -res_dists[j][k];
                 }
                 tsv_out << "\n";
             }
+            // for (int j = 0; j < k; j++) {  // Adjusted for min-heap
+            //     tsv_out << "\t" << res[i * k + j] << "\t" << -res_dists[i][j];
+            // }
         }
+        // }
 
         // End measuring total time
         auto end = std::chrono::high_resolution_clock::now();
         auto total_diff = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
         double total_time_seconds = static_cast<double>(total_diff) / 1000.0;  // Convert to seconds
 
-        tsv_out.close();
 
         // Calculate QPS
         double qps = static_cast<double>(q_pts) / total_time_seconds;
 
         // Print summary
-        float recall = ComputeRecall(q_pts, k, gt_dim, res, gt_ids);
-        float avg_projection_cmps = std::accumulate(projection_cmps_vec, projection_cmps_vec + q_pts, 0.0) / q_pts;
-        float avg_hops = std::accumulate(hops_vec, hops_vec + q_pts, 0.0) / q_pts;
+        // float recall = ComputeRecall(q_pts, k, gt_dim, res, gt_ids);
+        // float avg_projection_cmps = std::accumulate(projection_cmps_vec, projection_cmps_vec + q_pts, 0.0) / q_pts;
+        // float avg_hops = std::accumulate(hops_vec, hops_vec + q_pts, 0.0) / q_pts;
 
-        std::cout << "L_pq: " << L_pq 
-                << ", QPS: " << qps  // Print QPS
-                << ", Recall@" << k << ": " << recall
-                << ", Avg Hops: " << avg_hops << std::endl;
+        // std::cout << "L_pq: " << L_pq 
+        //         << ", QPS: " << qps  // Print QPS
+        //         << ", Recall@" << k << ": " << recall
+        //         << ", Avg Hops: " << avg_hops << std::endl;
+        // std::cout << "done" << std::endl;
             // Write the results to the evaluation file
-        if (evaluation_out.is_open()) {
-            evaluation_out << "L_pq: " << L_pq 
-                        << ", QPS: " << qps
-                        << ", Recall@" << k << ": " << recall
-                        << ", Avg Hops: " << avg_hops << "\n";
-        }
+        // if (evaluation_out.is_open()) {
+        //     evaluation_out << "L_pq: " << L_pq 
+        //                 << ", QPS: " << qps
+        //                 << ", Recall@" << k << ": " << recall
+        //                 << ", Avg Hops: " << avg_hops << "\n";
+        // }
     }
+    tsv_out.close();
+    std::cout << "done" << std::endl;   
 
     if (evaluation_out.is_open()) {
         evaluation_out.close();

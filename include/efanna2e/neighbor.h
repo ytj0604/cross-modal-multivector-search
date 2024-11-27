@@ -193,6 +193,10 @@ class NeighborPriorityQueue {
 
     bool has_unexpanded_node() const { return _cur < _size; }
 
+    bool has_unexpanded_node_in_k(size_t k) const {
+        return _cur < std::min(k, _size);
+    }
+
     size_t size() const { return _size; }
 
     size_t capacity() const { return _capacity; }

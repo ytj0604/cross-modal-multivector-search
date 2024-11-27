@@ -100,6 +100,9 @@ class IndexBipartite : public Index {
     std::pair<uint32_t, uint32_t> SearchRoarGraph(const float *query, size_t k, size_t &qid, const Parameters &parameters,
                                    unsigned *indices, std::vector<float>& res_dists);
 
+    std::vector<std::pair<uint32_t, uint32_t>> SearchMultivectorOnRoarGraph(std::vector<const float *>queries, size_t k, /* Not used */size_t &qid, const Parameters &parameters,
+                                               std::vector<std::vector<unsigned int>>&indices, std::vector<std::vector<float>>& res_dists);
+
     void SaveProjectionGraph(const char *filename);
 
     void LoadProjectionGraph(const char *filename);
