@@ -2450,8 +2450,8 @@ std::vector<std::pair<uint32_t, uint32_t>> IndexBipartite::SearchMultivectorOnRo
     std::vector<uint32_t> current_pq_size(queries.size(), min_pq);
     uint32_t sum_pq_size = min_pq * queries.size();
 
-    auto get_increased_pq_size = [](size_t pq_size) {
-        return pq_size * 2; // Change this to vary the pq size increase strategy (e.g., pq_size + 10)
+    auto get_increased_pq_size = [max_pq_size_budget](size_t pq_size) {
+        return pq_size + (size_t)(0.1 * max_pq_size_budget); // Change this to vary the pq size increase strategy (e.g., pq_size + 10)
     };
 
     auto search_query = [&](size_t query_index) {
@@ -2490,13 +2490,15 @@ std::vector<std::pair<uint32_t, uint32_t>> IndexBipartite::SearchMultivectorOnRo
         search_query(i);
     }
 
-    while(sum_pq_size <= max_pq_size_budget) {
+    while(sum_pq_size < max_pq_size_budget) {
         // Expand
         int32_t query_to_expand = -1;
         float max_gap = 0;
         for(size_t i = 0; i < queries.size(); ++i) {
-            float gap = search_queues[i][current_pq_size[i] - 1].distance - search_queues[i][0].distance; // negation of cosine similarity is stored.
-            if(gap > max_gap && get_increased_pq_size(current_pq_size[i]) < max_pq) {
+            float gap = (search_queues[i][current_pq_size[i] - 1].distance - search_queues[i][0].distance) / current_pq_size[i]; // negation of cosine similarity is stored.
+            if(gap > max_gap && 
+               get_increased_pq_size(current_pq_size[i]) < max_pq && 
+               sum_pq_size + get_increased_pq_size(current_pq_size[i]) - current_pq_size[i] <= max_pq_size_budget) {
                 max_gap = gap;
                 query_to_expand = i;
             }
