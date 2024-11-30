@@ -80,6 +80,7 @@ int main(int argc, char **argv) {
     uint32_t min_pq;
     uint32_t max_pq_size_budget;
     uint32_t query_multivector_size;
+    bool enable_adaptive_expansion;
 
     po::options_description desc{"Arguments"};
     try {
@@ -114,6 +115,7 @@ int main(int argc, char **argv) {
         desc.add_options()("min_pq", po::value<uint32_t>(&min_pq)->default_value(5), "min priority queue length");
         desc.add_options()("max_pq_size_budget", po::value<uint32_t>(&max_pq_size_budget)->default_value(10000), "max priority queue size budget");
         desc.add_options()("query_multivector_size", po::value<uint32_t>(&query_multivector_size)->default_value(4), "query multivector size");
+        desc.add_options()("enable_adaptive_expansion", po::value<bool>(&enable_adaptive_expansion)->default_value(true), "enable adaptive expansion");
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, desc), vm);
         if (vm.count("help")) {
@@ -259,7 +261,7 @@ int main(int argc, char **argv) {
             res_dist.clear();
         }
         // Perform the search for the current query
-        auto ret_val = index.SearchMultivectorOnRoarGraph(queries, k, i, parameters, indices, res_dists);
+        auto ret_val = index.SearchMultivectorOnRoarGraph(queries, k, i, parameters, indices, res_dists, enable_adaptive_expansion);
 
         // End timing for the individual query
         auto query_end = std::chrono::high_resolution_clock::now();

@@ -2420,7 +2420,7 @@ std::pair<uint32_t, uint32_t> IndexBipartite::SearchRoarGraph(const float *query
 }
 
 std::vector<std::pair<uint32_t, uint32_t>> IndexBipartite::SearchMultivectorOnRoarGraph(std::vector<const float *>queries, size_t k, /* Not used */ size_t &qid, const Parameters &parameters,
-                                               std::vector<std::vector<unsigned int>>&indices, std::vector<std::vector<float>>& res_dists) {
+                                               std::vector<std::vector<unsigned int>>&indices, std::vector<std::vector<float>>& res_dists, bool enable_adaptive_expansion) {
     // uint32_t L_pq = parameters.Get<uint32_t>("L_pq");
     uint32_t min_pq = parameters.Get<uint32_t>("min_pq");
     uint32_t max_pq = parameters.Get<uint32_t>("max_pq");
@@ -2446,9 +2446,13 @@ std::vector<std::pair<uint32_t, uint32_t>> IndexBipartite::SearchMultivectorOnRo
     }
     std::vector<uint32_t> cmps(queries.size(), 0);
     std::vector<uint32_t> hops(queries.size(), 0);
-
     std::vector<uint32_t> current_pq_size(queries.size(), min_pq);
     uint32_t sum_pq_size = min_pq * queries.size();
+
+    if(!enable_adaptive_expansion) {
+        std::fill(current_pq_size.begin(), current_pq_size.end(), max_pq_size_budget / queries.size());
+        sum_pq_size = max_pq_size_budget;
+    }
 
     auto get_increased_pq_size = [max_pq_size_budget](size_t pq_size) {
         return pq_size + (size_t)(0.1 * max_pq_size_budget); // Change this to vary the pq size increase strategy (e.g., pq_size + 10)
@@ -2503,6 +2507,17 @@ std::vector<std::pair<uint32_t, uint32_t>> IndexBipartite::SearchMultivectorOnRo
                 query_to_expand = i;
             }
         }
+        // float min_gap = 10.0;
+        // for(size_t i = 0; i < queries.size(); ++i) {
+        //     float gap = (search_queues[i][current_pq_size[i] - 1].distance - search_queues[i][0].distance) / current_pq_size[i]; // negation of cosine similarity is stored.
+        //     if(gap < min_gap && 
+        //        get_increased_pq_size(current_pq_size[i]) < max_pq && 
+        //        sum_pq_size + get_increased_pq_size(current_pq_size[i]) - current_pq_size[i] <= max_pq_size_budget) {
+        //         min_gap = gap;
+        //         query_to_expand = i;
+        //     }
+        // }
+
         if(query_to_expand == -1) break;
         sum_pq_size += get_increased_pq_size(current_pq_size[query_to_expand]) - current_pq_size[query_to_expand];
         current_pq_size[query_to_expand] = get_increased_pq_size(current_pq_size[query_to_expand]);
