@@ -20,14 +20,14 @@ def process_file(file_path, skip_lines=1):
             # Skip the specified number of lines
             i += (1 + skip_lines)
 
-    print(f"Accumulated latency: {accum}")
+    print(f"{accum}")
 
 
 # Example usage
 # Save the input text to a file (e.g., "data.txt") and replace 'data.txt' with your file path
 #iterate over 20, 40, 80, 120, 160, 200, 400, 600, 800, 1000
-for i in [20, 40, 80, 120, 160, 200, 400, 600, 800, 1000, 2000, 3000, 5000]:
-    file_path = f"/mnt/dive/4/no_adaptive_expansion_results/i2t_Roar_35_{i}.tsv"
-    process_file(file_path, skip_lines=4)
-# file_path = "/mnt/dive/1/results/t2i_Roar_35_160.tsv"
-# process_file(file_path, skip_lines=1)
+for n in [2, 3, 4, 5]:
+    for st in ["t2i", "i2t"]:
+        for i in [20, 40, 80, 120, 160, 200, 400, 600, 800, 1000]:
+            file_path = f"/mnt/dive/{n}/result_shared_visited_list/{st}_Roar_35_{i}.tsv"
+            process_file(file_path, skip_lines=n)
