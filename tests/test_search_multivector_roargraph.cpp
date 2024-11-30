@@ -208,8 +208,8 @@ int main(int argc, char **argv) {
     // if (!evaluation_save_path.empty()) {
     //     evaluation_out.open(evaluation_save_path, std::ios::out);
     // }
-    std::cout << "Using thread: " << num_threads << std::endl;
-    std::cout << "L_pq" << "\t\tQPS" << "\t\t\tavg_visited" << "\tmean_latency" << "\trecall@" << k << "\tavg_hops" << std::endl;
+    // std::cout << "Using thread: " << num_threads << std::endl;
+    // std::cout << "L_pq" << "\t\tQPS" << "\t\t\tavg_visited" << "\tmean_latency" << "\trecall@" << k << "\tavg_hops" << std::endl;
 
     if (!evaluation_save_path.empty()) {
         // Open evaluation file in append mode
@@ -220,7 +220,7 @@ int main(int argc, char **argv) {
         }
 
         // Write the name of the projection index file to the evaluation file
-        evaluation_out << "Index File: " << projection_index_save_file << "\n";
+        // evaluation_out << "Index File: " << projection_index_save_file << "\n";
     }
 
     parameters.Set<uint32_t>("min_pq", min_pq);
@@ -243,6 +243,7 @@ int main(int argc, char **argv) {
 
     std::vector<const float *> queries;
     queries.resize(query_multivector_size);
+    int64_t total_comparison = 0;
 
 #pragma omp parallel for schedule(dynamic, 1)
     for (size_t i = 0; i < q_pts; ++i) {
@@ -262,12 +263,13 @@ int main(int argc, char **argv) {
         }
         // Perform the search for the current query
         auto ret_val = index.SearchMultivectorOnRoarGraph(queries, k, i, parameters, indices, res_dists, enable_adaptive_expansion);
-
         // End timing for the individual query
         auto query_end = std::chrono::high_resolution_clock::now();
         auto query_diff = std::chrono::duration_cast<std::chrono::microseconds>(query_end - query_start).count();
         double query_time_seconds = static_cast<double>(query_diff) / 1'000'000;  // Convert to seconds with precision
-
+        for(auto &pair: ret_val) {
+            total_comparison += pair.first;
+        }
         // Save the results
         // projection_cmps_vec[i] = ret_val.first;
         // hops_vec[i] = ret_val.second;
@@ -316,9 +318,9 @@ int main(int argc, char **argv) {
         //                 << ", Avg Hops: " << avg_hops << "\n";
         // }
     }
-    tsv_out.close();
-    std::cout << "done" << std::endl;   
+    tsv_out.close();  
 
+    evaluation_out << max_pq_size_budget << "\t" << total_comparison << std::endl;
     if (evaluation_out.is_open()) {
         evaluation_out.close();
     }
