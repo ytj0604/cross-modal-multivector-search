@@ -88,7 +88,7 @@ prefix=/mnt/dive/${i}/
 roargraph_dir=/mnt/RoarGraph/build/
 text_data=${prefix}/coco_test_${i}_txt_embs.fbin
 image_data=${prefix}/coco_test_${i}_img_embs.fbin
-result_dir=${prefix}/reverse_adaptive_expansion_results/
+result_dir=${prefix}/result_temp_can_remove/
 
 if [ ! -d ${result_dir} ]; then
   mkdir -p ${result_dir}
@@ -99,14 +99,14 @@ topk=20
 
 M_PJBP=${1:-35}
 query_multivector_size=${i}
-# beam_width_budget=(20 40 80 120 160 200 400 600 800 1000)
-beam_width_budget=(1500 2000 3000 5000)
+beam_width_budget=(20 40 80 120 160 200 400 600 800 1000)
+# beam_width_budget=(1500 2000 3000 5000)
 # beam_width_budget=(1500)
 min_beam_width=5
 # max_beam_width=1000
-enable_adaptive_expansion=true
+enable_adaptive_expansion=false
 
-evaluation_save_path=${prefix}/results/aggregated_results.txt
+evaluation_save_path=${result_dir}/aggregated_results.txt
 
 # Function to run a single search experiment
 run_search() {
@@ -160,11 +160,15 @@ for budget in "${beam_width_budget[@]}"; do
     ${budget}
 
   # Image to Text (i2t)
-  run_search ${image_data} ${text_data} \
+done
+
+for budget in "${beam_width_budget[@]}"; do
+    run_search ${image_data} ${text_data} \
     ${prefix}/i2t_Roar_${M_PJBP}.index \
     ${prefix}/i2t.gt.bin \
     ${result_dir}/i2t_Roar_${M_PJBP} \
     ${budget}
 done
+
 echo "Search experiments completed!"
 done

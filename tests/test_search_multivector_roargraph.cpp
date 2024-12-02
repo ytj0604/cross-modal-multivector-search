@@ -17,6 +17,7 @@
 #include "efanna2e/parameters.h"
 #include "efanna2e/util.h"
 #include "index_bipartite.h"
+#include "multivector_reranker.h"
 
 namespace po = boost::program_options;
 
