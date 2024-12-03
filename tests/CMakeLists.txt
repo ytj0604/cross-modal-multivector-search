@@ -27,6 +27,9 @@ target_link_libraries(test_search_multivector_roargraph ${GTEST_LIBRARIES} pthre
 add_executable(test_search_multivector_rerank test_search_multivector_rerank.cpp)
 target_link_libraries(test_search_multivector_rerank ${GTEST_LIBRARIES} pthread ${PROJECT_NAME} Boost::program_options ${BLAS_LIBRARIES})
 
+add_executable(test_search_multivector_fullscan_rerank test_search_multivector_fullscan_rerank.cpp)
+target_link_libraries(test_search_multivector_fullscan_rerank ${GTEST_LIBRARIES} pthread ${PROJECT_NAME} Boost::program_options ${BLAS_LIBRARIES})
+
 add_executable(test_only_build_bipartite test_only_build_bipartite.cpp)
 target_link_libraries(test_only_build_bipartite ${GTEST_LIBRARIES} pthread ${PROJECT_NAME}  Boost::program_options)
 

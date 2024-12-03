@@ -248,19 +248,19 @@ int main(int argc, char **argv) {
         reranked_indices.clear();
         auto query_start = std::chrono::high_resolution_clock::now();
         // Perform the search for the current query
-        auto ret_val = index.SearchMultivectorOnRoarGraph(queries, k, i, parameters, indices, res_dists, enable_adaptive_expansion);
+        // auto ret_val = index.SearchMultivectorOnRoarGraph(queries, k, i, parameters, indices, res_dists, enable_adaptive_expansion);
         auto rerank_start = std::chrono::high_resolution_clock::now();
         unsigned int uint_query_index = (unsigned int)i;
-        reranker.Rerank(uint_query_index, indices, reranked_indices);
+        reranker.RerankAllBySequentialScan(uint_query_index, reranked_indices);
         // End timing for the individual query
         auto query_end = std::chrono::high_resolution_clock::now();
         auto rerank_diff = std::chrono::duration_cast<std::chrono::microseconds>(query_end - rerank_start).count();
         auto rerank_time_seconds = static_cast<double>(rerank_diff) / 1'000'000;  // Convert to seconds with precision
         auto query_diff = std::chrono::duration_cast<std::chrono::microseconds>(query_end - query_start).count();
         double query_time_seconds = static_cast<double>(query_diff) / 1'000'000;  // Convert to seconds with precision
-        for(auto &pair: ret_val) {
-            total_comparison += pair.first;
-        }
+        // for(auto &pair: ret_val) {
+        //     total_comparison += pair.first;
+        // }
         total_graph_search_time += (query_time_seconds - rerank_time_seconds);
         total_rerank_time += rerank_time_seconds;
         double reranked_recall = recall_calculator.ComputeRecall(i, reranked_indices);

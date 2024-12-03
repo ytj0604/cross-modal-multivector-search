@@ -88,7 +88,7 @@ for i in {1..5}; do
   roargraph_dir=/mnt/RoarGraph/build/
   text_data=${prefix}/coco_test_${i}_txt_embs.fbin
   image_data=${prefix}/coco_test_${i}_img_embs.fbin
-  result_dir=${prefix}/result_enable_reverse_adaptive_expansion/
+  result_dir=${prefix}/result_seqscan/
   gt_dir=/mnt/dive/ground_truth/
 
   if [ ! -d ${result_dir} ]; then
@@ -101,7 +101,7 @@ for i in {1..5}; do
 
   M_PJBP=${1:-35}
   query_multivector_size=${i}
-  beam_width_budget=(20 40 80 120 160 200 400 600 800 1000)
+  beam_width_budget=(1)
   # beam_width_budget=(1500 2000 3000 5000)
   # beam_width_budget=(1000)
   min_beam_width=5
@@ -120,7 +120,7 @@ for i in {1..5}; do
     local budget=$6
     local set_gt_path=$7
 
-    ${roargraph_dir}/tests/test_search_multivector_rerank --data_type float \
+    ${roargraph_dir}/tests/test_search_multivector_fullscan_rerank --data_type float \
       --dist cosine --base_data_path ${base_data} \
       --projection_index_save_path ${index_name} \
       --gt_path ${gt_path} \
