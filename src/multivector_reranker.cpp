@@ -69,38 +69,89 @@ void MultiVectorReranker::Rerank(
   }
 }
 
-void MultiVectorReranker::computeCosineSimilarity(const Eigen::Ref<const MatrixType>& X,
-                             const Eigen::Ref<const MatrixType>& Y,
-                             Eigen::Ref<MatrixType> result) {
+void MultiVectorReranker::RerankAllBySequentialScan(
+    VectorSetID& query_id, std::vector<VectorSetID>& reranked_indices) {
+  Eigen::Map<const MatrixType> query_set(
+      query_matrix.data() +
+          query_id * multi_vector_cardinality * query_matrix.cols(),
+      multi_vector_cardinality, query_matrix.cols());
+
+  std::vector<std::pair<float, VectorSetID>> relevance_scores;
+  relevance_scores.reserve(data_matrix.rows() / multi_vector_cardinality);
+
+  for (VectorSetID data_set_id = 0;
+       data_set_id < data_matrix.rows() / multi_vector_cardinality;
+       ++data_set_id) {
+    Eigen::Map<const MatrixType> data_set(
+        data_matrix.data() +
+            data_set_id * multi_vector_cardinality * data_matrix.cols(),
+        multi_vector_cardinality, data_matrix.cols());
+    float relevance = set_to_set_distance_metric(query_set, data_set);
+    relevance_scores.emplace_back(relevance, data_set_id);
+  }
+
+  size_t top_k =
+      std::min(this->k, static_cast<uint32_t>(relevance_scores.size()));
+
+  std::partial_sort(relevance_scores.begin(), relevance_scores.begin() + top_k,
+                    relevance_scores.end(), [](const auto& a, const auto& b) {
+                      return a.first > b.first;  // Higher relevance first
+                    });
+
+  reranked_indices.clear();
+  reranked_indices.reserve(top_k);
+  for (size_t i = 0; i < top_k; ++i) {
+    reranked_indices.push_back(relevance_scores[i].second);
+  }
+}
+
+void MultiVectorReranker::computeCosineSimilarity(
+    const Eigen::Ref<const MatrixType>& X,
+    const Eigen::Ref<const MatrixType>& Y, Eigen::Ref<MatrixType> result) {
   result = X * Y.transpose();
 }
 
 float MultiVectorReranker::computeSmoothChamferDistance(
     const Eigen::Ref<const MatrixType>& img_embs,
     const Eigen::Ref<const MatrixType>& txt_embs) {
+  // Compute cosine similarity
   MatrixType dist(img_embs.rows(), txt_embs.rows());
   vector_distance_metric(img_embs, txt_embs, dist);
 
+  // Compute temp_dist1 and temp_dist2
   MatrixType temp_dist1 = temperature * temperature_txt_scale * dist;
   MatrixType temp_dist2 = temperature * dist;
 
-  Eigen::VectorXf col_max = temp_dist1.colwise().maxCoeff();
-  Eigen::VectorXf row_max = temp_dist2.rowwise().maxCoeff();
+  // Compute row-wise max for temp_dist1
+  Eigen::VectorXf row_max = temp_dist1.rowwise().maxCoeff();  // Size: (n_img)
 
-  MatrixType exp1 = (temp_dist1.colwise() - col_max).array().exp();
-  MatrixType exp2 = (temp_dist2.rowwise() - row_max.transpose()).array().exp();
+  // Subtract row_max and exponentiate for temp_dist1
+  MatrixType exp1 =
+      (temp_dist1.colwise() - row_max).array().exp();  // Size: (n_img, n_txt)
 
-  // Compute sums
-  Eigen::VectorXf row_sum = exp1.rowwise().sum();
-  Eigen::VectorXf col_sum = exp2.colwise().sum();
+  // Compute row-wise sum and log for temp_dist1
+  Eigen::VectorXf row_sum = exp1.rowwise().sum();  // Size: (n_img)
+  Eigen::VectorXf row_log =
+      row_sum.array().log() + row_max.array();  // Size: (n_img)
 
-  // Compute logarithms
-  Eigen::VectorXf row_log = row_sum.array().log() + col_max.transpose().array();
-  Eigen::VectorXf col_log = col_sum.array().log() + row_max.array();
-
-  // Compute terms
+  // Compute term1
   float term1 = row_log.sum() / (multi_vector_cardinality * temperature *
                                  temperature_txt_scale);
+
+  // Compute column-wise max for temp_dist2
+  Eigen::VectorXf col_max = temp_dist2.colwise().maxCoeff();  // Size: (n_txt)
+
+  // Subtract col_max and exponentiate for temp_dist2
+  MatrixType exp2 = (temp_dist2.rowwise() - col_max.transpose())
+                        .array()
+                        .exp();  // Size: (n_img, n_txt)
+
+  // Compute column-wise sum and log for temp_dist2
+  Eigen::VectorXf col_sum = exp2.colwise().sum();  // Size: (n_txt)
+  Eigen::VectorXf col_log =
+      col_sum.array().log() + col_max.array();  // Size: (n_txt)
+
+  // Compute term2
   float term2 = col_log.sum() / (multi_vector_cardinality * temperature);
 
   // Smooth Chamfer Distance
@@ -187,4 +238,98 @@ MatrixType Loader::LoadEmbeddingVector(const std::string& file_path) {
   in.close();
 
   return data_matrix;
+}
+
+void RecallCalculator::SetGroundTruth(GroundTruthType ground_truth) {
+  this->ground_truth = ground_truth;
+}
+
+double RecallCalculator::ComputeRecall(
+    VectorSetID query_id, const std::vector<VectorSetID>& reranked_indices) {
+  if (ground_truth == nullptr) {
+    throw std::runtime_error("Ground truth not set.");
+  }
+  if (k == 0) {
+    throw std::runtime_error("Recall@k not set.");
+  }
+
+  // Access the ground truth for the given query
+  const auto& gt_for_this_query = (*ground_truth)[query_id];
+
+  if (k > gt_for_this_query.size()) {
+    throw std::invalid_argument(
+        "k is greater than the number of ground truth items.");
+  }
+
+  std::unordered_set<VectorSetID> gt_set(gt_for_this_query.begin(),
+                                         gt_for_this_query.begin() + k);
+
+  // Compute the number of relevant items in the top-k reranked indices
+  uint32_t num_relevant = 0;
+  const size_t actual_k =
+      std::min(static_cast<size_t>(k), reranked_indices.size());
+  for (size_t i = 0; i < actual_k; ++i) {
+    if (gt_set.find(reranked_indices[i]) != gt_set.end()) {
+      ++num_relevant;
+    }
+  }
+
+  // Return the recall as the fraction of top-k ground truth items found
+  return static_cast<double>(num_relevant) / k;
+}
+
+GroundTruthType Loader::LoadGroundTruth(const std::string& file_path) {
+  // Open the file in binary mode
+  std::ifstream in(file_path, std::ios::binary);
+  if (!in.is_open()) {
+    throw std::runtime_error("Cannot open file: " + file_path);
+  }
+
+  unsigned int num_queries = 0;
+  unsigned int num_gt_per_query = 0;
+
+  // Read the number of queries and number of ground truth per query (8 bytes)
+  in.read(reinterpret_cast<char*>(&num_queries), sizeof(unsigned int));
+  in.read(reinterpret_cast<char*>(&num_gt_per_query), sizeof(unsigned int));
+
+  // Verify that the file size matches the expected size
+  in.seekg(0, std::ios::end);
+  std::streampos file_size = in.tellg();
+  std::size_t expected_size =
+      sizeof(unsigned int) * 2 + static_cast<std::size_t>(num_queries) *
+                                     num_gt_per_query * sizeof(unsigned int);
+
+  if (static_cast<std::size_t>(file_size) != expected_size) {
+    std::cerr << "File size does not match expected size.\n";
+    std::cerr << "Expected size: " << expected_size
+              << " bytes, but file size is " << file_size << " bytes.\n";
+    throw std::runtime_error("Ground truth file size mismatch.");
+  }
+
+  // Return to the position after the header
+  in.seekg(sizeof(unsigned int) * 2, std::ios::beg);
+
+  // Allocate the ground truth data structure
+  auto ground_truth =
+      std::make_shared<std::vector<std::vector<VectorSetID>>>(num_queries);
+
+  // Read the ground truth data
+  for (unsigned int i = 0; i < num_queries; ++i) {
+    std::vector<VectorSetID> gt_vector(num_gt_per_query);
+    in.read(
+        reinterpret_cast<char*>(gt_vector.data()),
+        static_cast<std::streamsize>(num_gt_per_query * sizeof(unsigned int)));
+
+    if (!in) {
+      throw std::runtime_error("Error reading ground truth data from file: " +
+                               file_path);
+    }
+
+    // Store the ground truth vector
+    (*ground_truth)[i] = std::move(gt_vector);
+  }
+
+  in.close();
+
+  return ground_truth;
 }

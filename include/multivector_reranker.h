@@ -8,6 +8,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <unordered_set>
 #include <vector>
 
@@ -15,6 +16,7 @@ using VectorSetID = unsigned int;
 using VectorID = unsigned int;
 using MatrixType =
     Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+using GroundTruthType = std::shared_ptr<std::vector<std::vector<VectorSetID>>>;
 
 class MultiVectorReranker {
  public:
@@ -29,7 +31,7 @@ class MultiVectorReranker {
   void Rerank(VectorSetID& query_id,
               const std::vector<std::vector<VectorID>>& indices,
               std::vector<VectorSetID>& reranked_indices);
-
+  void RerankAllBySequentialScan(VectorSetID& query_id, std::vector<VectorSetID>& reranked_indices);
  private:
   void computeCosineSimilarity(const Eigen::Ref<const MatrixType>&,
                                const Eigen::Ref<const MatrixType>&,
@@ -55,18 +57,22 @@ class MultiVectorReranker {
   uint32_t k;
 };
 
-// class RecallCalculator {
-//  public:
-//   void SetGroundTruth(std::vector<float> gt, std::vector<uint32_t> indices);
-//   float ComputeRecall(uint32_t query_id, std::vector<VectorSetID> res);
+class RecallCalculator {
+ public:
+  void SetK(uint32_t k) { this->k = k; }
+  void SetGroundTruth(GroundTruthType ground_truth);
+  double ComputeRecall(VectorSetID query_id,
+                       const std::vector<VectorSetID>& reranked_indices);
 
-//  private:
-//   std::vector<float> gt;
-// };
+ private:
+  uint32_t k = 0;
+  GroundTruthType ground_truth;
+};
 
 class Loader {
  public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   static MatrixType LoadEmbeddingVector(const std::string& file_path);
+  static GroundTruthType LoadGroundTruth(const std::string& file_path);
 };
 #endif  // MULTI_VECTOR_RERANKER_H
