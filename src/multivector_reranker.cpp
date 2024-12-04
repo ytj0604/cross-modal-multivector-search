@@ -333,3 +333,43 @@ GroundTruthType Loader::LoadGroundTruth(const std::string& file_path) {
 
   return ground_truth;
 }
+
+VectorGroundTruthType Loader::LoadVectorGroundTruth(
+    const std::string& file_path) {
+  std::ifstream in(file_path, std::ios::binary);
+  if (!in.is_open()) {
+    std::cerr << "Error: Unable to open file " << file_path << std::endl;
+    throw std::runtime_error("File open error");
+  }
+
+  // Read metadata: points_num and dim
+  uint32_t points_num, dim;
+  in.read(reinterpret_cast<char*>(&points_num), sizeof(uint32_t));
+  in.read(reinterpret_cast<char*>(&dim), sizeof(uint32_t));
+
+  auto result = std::make_shared<std::vector<std::vector<VectorID>>>(
+      points_num, std::vector<VectorID>(dim));
+
+  for (size_t i = 0; i < points_num; ++i) {
+    in.read(reinterpret_cast<char*>((*result)[i].data()), dim * sizeof(uint32_t));
+  }
+
+  // Validate file size to ensure it matches the expected structure
+  std::ios::pos_type cursor_position = in.tellg();
+  in.seekg(0, std::ios::end);
+  std::ios::pos_type file_size = in.tellg();
+
+  size_t expected_size =
+      sizeof(uint32_t) * 2                   // Metadata
+      + points_num * dim * sizeof(uint32_t)  // Nearest neighbor IDs
+      + points_num * dim * sizeof(float);    // Distances (skipped)
+
+  if (static_cast<size_t>(file_size) != expected_size) {
+    std::cerr << "Error: File size mismatch. Expected " << expected_size
+              << " bytes but got " << file_size << " bytes." << std::endl;
+    throw std::runtime_error("File size validation failed");
+  }
+
+  in.close();
+  return result;
+}
