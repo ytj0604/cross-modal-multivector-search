@@ -16,6 +16,7 @@
 #include <atomic>
 #include <utility>
 #include <unordered_set>
+#include <cmath>
 
 #include "efanna2e/exceptions.h"
 #include "efanna2e/parameters.h"
@@ -2492,7 +2493,7 @@ std::vector<std::pair<uint32_t, uint32_t>> IndexBipartite::SearchMultivectorOnRo
         int32_t query_to_expand = -1;
         float max_gap = 0;
         for(size_t i = 0; i < queries.size(); ++i) {
-            float gap = (search_queues[i][current_pq_size[i] - 1].distance - search_queues[i][0].distance) / current_pq_size[i]; // negation of cosine similarity is stored.
+            float gap = (search_queues[i][current_pq_size[i] - 1].distance - search_queues[i][0].distance); // negation of cosine similarity is stored.
             if(gap > max_gap && 
                get_increased_pq_size(current_pq_size[i]) < max_pq && 
                sum_pq_size + get_increased_pq_size(current_pq_size[i]) - current_pq_size[i] <= max_pq_size_budget) {
@@ -2762,6 +2763,150 @@ std::vector<std::pair<uint32_t, uint32_t>> IndexBipartite::SearchMultivectorOnRo
     return ret;
 }
 
+std::vector<std::pair<uint32_t, uint32_t>> IndexBipartite::SearchMultivectorOnRoarGraphTest(
+    std::vector<const float *> queries, size_t k, /* Not used */ size_t &qid, 
+    const Parameters &parameters, std::vector<std::vector<unsigned int>> &indices, 
+    std::vector<std::vector<float>> &res_dists) {
+    
+    uint32_t min_pq = parameters.Get<uint32_t>("min_pq");
+    uint32_t max_pq = parameters.Get<uint32_t>("max_pq");
+    uint32_t max_pq_size_budget = parameters.Get<uint32_t>("max_pq_size_budget");
+    std::vector<NeighborPriorityQueue> search_queues(queries.size(), NeighborPriorityQueue(max_pq));
+
+    std::vector<uint32_t> init_ids;
+    init_ids.push_back(projection_ep_);
+    prefetch_vector((char *)(data_bp_ + projection_ep_ * dimension_), dimension_);
+    std::vector<VisitedList *> visited_lists;
+    std::vector<vl_type *> visited_arrays;
+    std::vector<vl_type> visited_array_tags;
+
+    for (size_t i = 0; i < queries.size(); ++i) {
+        visited_lists.push_back(visited_list_pool_->getFreeVisitedList());
+        visited_arrays.push_back(visited_lists[i]->mass);
+        visited_array_tags.push_back(visited_lists[i]->curV);
+    }
+
+    for (size_t i = 0; i < queries.size(); ++i) {
+        for (auto &id : init_ids) {
+            float distance = distance_->compare(data_bp_ + id * dimension_, queries[i], (unsigned)dimension_);
+            Neighbor nn = Neighbor(id, distance, false);
+            search_queues[i].insert(nn);
+        }
+    }
+
+    std::vector<uint32_t> cmps(queries.size(), 0);
+    std::vector<uint32_t> hops(queries.size(), 0);
+    std::vector<uint32_t> current_pq_size(queries.size(), min_pq);
+    uint32_t sum_pq_size = min_pq * queries.size();
+
+    auto get_increased_pq_size = [max_pq_size_budget](size_t pq_size) {
+        return pq_size + (size_t)(0.1 * max_pq_size_budget);
+    };
+
+    auto get_previous_pq_size = [max_pq_size_budget, min_pq](uint32_t pq_size) {
+        return (pq_size > min_pq) ? pq_size - (uint32_t)(0.1 * max_pq_size_budget) : 0u;
+    };
+
+    auto compute_penalty = [&](size_t query_index) -> float {
+        float penalty = 0.0f;
+
+        // Normalize current beam width contributions
+        float total_beam_width = static_cast<float>(sum_pq_size);
+        for (size_t i = 0; i < queries.size(); ++i) {
+            if (i != query_index) {
+                // Calculate similarity (negated distance)
+                float similarity = -distance_->compare(queries[query_index], queries[i], (unsigned)dimension_);
+
+                // Ensure similarity is in [0, 1] for robustness
+                similarity = 1 - (1 - similarity) * (1-similarity);
+
+                // Normalize beam width as a proportion of the total
+                float normalized_beam_width = static_cast<float>(current_pq_size[i]) / total_beam_width;
+
+                // Combine similarity and beam width into the penalty
+                penalty += similarity * normalized_beam_width;
+            }
+        }
+
+        // Normalize the total penalty to be between 0 and 1
+        return penalty / queries.size();
+    };
+
+    auto search_query = [&](size_t query_index) {
+        auto &search_queue = search_queues[query_index];
+        auto &visited_array = visited_arrays[query_index];
+        auto visited_array_tag = visited_array_tags[query_index];
+
+        while (search_queue.has_unexpanded_node_in_k(current_pq_size[query_index])) {
+            auto cur_check_node = search_queue.closest_unexpanded();
+            auto cur_id = cur_check_node.id;
+            uint32_t *cur_nbrs = projection_graph_[cur_id].data();
+            ++hops[query_index];
+
+            for (size_t j = 0; j < projection_graph_[cur_id].size(); ++j) {
+                uint32_t nbr = *(cur_nbrs + j);
+                _mm_prefetch((char *)(visited_array + *(cur_nbrs + j + 1)), _MM_HINT_T0);
+                _mm_prefetch((char *)(data_bp_ + *(cur_nbrs + j + 1) * dimension_), _MM_HINT_T0);
+
+                if (visited_array[nbr] != visited_array_tag) {
+                    visited_array[nbr] = visited_array_tag;
+                    float distance = distance_->compare(data_bp_ + nbr * dimension_, queries[query_index], (unsigned)dimension_);
+                    ++cmps[query_index];
+                    search_queue.insert({nbr, distance, false});
+                }
+            }
+        }
+    };
+
+    for (size_t i = 0; i < queries.size(); ++i) {
+        search_query(i);
+    }
+
+    while (sum_pq_size < max_pq_size_budget) {
+        int32_t query_to_expand = -1;
+        float max_adjusted_score = -100.0f;
+
+        for (size_t i = 0; i < queries.size(); ++i) {
+            // float gap = (search_queues[i][current_pq_size[i] - 1].distance - search_queues[i][0].distance); // negation of cosine similarity is stored.
+            float gap = 1;
+            float penalty = compute_penalty(i);
+            // std::cout << "Gap: " << gap << ", Penalty: " << penalty << std::endl;
+            float adjusted_score = gap - penalty;
+
+            if (adjusted_score > max_adjusted_score &&
+                get_increased_pq_size(current_pq_size[i]) < max_pq &&
+                sum_pq_size + get_increased_pq_size(current_pq_size[i]) - current_pq_size[i] <= max_pq_size_budget) {
+                max_adjusted_score = adjusted_score;
+                query_to_expand = i;
+            }
+        }
+
+        if (query_to_expand == -1)
+            break;
+
+        sum_pq_size += get_increased_pq_size(current_pq_size[query_to_expand]) - current_pq_size[query_to_expand];
+        current_pq_size[query_to_expand] = get_increased_pq_size(current_pq_size[query_to_expand]);
+
+        search_query(query_to_expand);
+    }
+
+    for (auto &v : visited_lists) {
+        visited_list_pool_->releaseVisitedList(v);
+    }
+
+    for (size_t i = 0; i < queries.size(); ++i) {
+        for (size_t j = 0; j < current_pq_size[i]; ++j) {
+            indices[i].push_back(search_queues[i][j].id);
+            res_dists[i].push_back(search_queues[i][j].distance);
+        }
+    }
+
+    std::vector<std::pair<uint32_t, uint32_t>> ret;
+    for (size_t i = 0; i < queries.size(); ++i) {
+        ret.push_back(std::make_pair(cmps[i], hops[i]));
+    }
+    return ret;
+}
 
 // uint32_t IndexBipartite::SearchProjectionGraph(const float *query, size_t k, size_t &qid, const Parameters
 // &parameters,

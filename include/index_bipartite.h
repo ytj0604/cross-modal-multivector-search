@@ -107,7 +107,9 @@ class IndexBipartite : public Index {
 
     std::vector<std::pair<uint32_t, uint32_t>> SearchMultivectorOnRoarGraphWithSharedVisitedList(std::vector<const float *>queries, size_t k, /* Not used */ size_t &qid, const Parameters &parameters,
                                                std::vector<std::vector<unsigned int>>&indices, std::vector<std::vector<float>>& res_dists, bool enable_adaptive_expansion);
-
+    // A variant of SearchMultivectorOnRoarGraph() with various changes for test purpose.
+    std::vector<std::pair<uint32_t, uint32_t>> SearchMultivectorOnRoarGraphTest(std::vector<const float *>queries, size_t k, /* Not used */size_t &qid, const Parameters &parameters,
+                                               std::vector<std::vector<unsigned int>>&indices, std::vector<std::vector<float>>& res_dists);
 
     void SaveProjectionGraph(const char *filename);
 
