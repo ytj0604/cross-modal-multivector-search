@@ -81,14 +81,14 @@
 # done
 # echo "Search experiments completed!"
 
-for i in {1..5}; do
+for i in {2..5}; do
 
   # Set paths and parameters
   prefix=/mnt/dive/${i}/
   roargraph_dir=/mnt/RoarGraph/build/
   text_data=${prefix}/coco_test_${i}_txt_embs.fbin
   image_data=${prefix}/coco_test_${i}_img_embs.fbin
-  result_dir=${prefix}/result_enable_reverse_adaptive_expansion/
+  result_dir=${prefix}/result_temp/
   gt_dir=/mnt/dive/ground_truth/
 
   if [ ! -d ${result_dir} ]; then
@@ -159,4 +159,3 @@ for i in {1..5}; do
 
   echo "Search experiments completed!"
 done
-curl -X POST -H 'Content-type: application/json' --data '{"text":"Experiment run finished"}' https://hooks.slack.com/services/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
