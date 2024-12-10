@@ -18,7 +18,7 @@
 #include "efanna2e/util.h"
 #include "index_bipartite.h"
 #include "multivector_reranker.h"
-#include "test_class.h"
+#include "utility_methods.h"
 
 namespace po = boost::program_options;
 
@@ -51,5 +51,5 @@ int main(int argc, char** argv) {
   }
   auto sgt = Loader::LoadGroundTruth(seg_gt_path);
   auto vgt = Loader::LoadVectorGroundTruth(vector_gt_path);
-  TestClass::TestKNNSignificance(sgt, vgt, multi_vector_cardinality, output, k, num_raw_vector_results);
+  UtilityMethods::TestKNNSignificance(sgt, vgt, multi_vector_cardinality, output, k, num_raw_vector_results);
 }

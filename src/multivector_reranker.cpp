@@ -105,6 +105,29 @@ void MultiVectorReranker::RerankAllBySequentialScan(
   }
 }
 
+void MultiVectorReranker::RerankAllAndGenerateSetGroundTruth(
+    const std::string& ground_truth_file) {
+  if(multi_vector_cardinality == 0) {
+    throw std::runtime_error("Multi-vector cardinality not set.");
+  }
+  std::ofstream out(ground_truth_file, std::ios::binary);
+  uint32_t num_queries = query_matrix.rows() / multi_vector_cardinality;
+  uint32_t num_gt_per_query = data_matrix.rows() / multi_vector_cardinality;
+  out.write(reinterpret_cast<const char*>(&num_queries), sizeof(uint32_t));
+  out.write(reinterpret_cast<const char*>(&num_gt_per_query), sizeof(uint32_t));
+  if (!out.is_open()) {
+    throw std::runtime_error("Cannot open file: " + ground_truth_file);
+  }
+  this->k = num_gt_per_query;
+  std::vector<VectorSetID> reranked_indices;
+  for (uint32_t i = 0; i < num_queries; ++i) {
+    RerankAllBySequentialScan(i, reranked_indices);
+    out.write(reinterpret_cast<const char*>(reranked_indices.data()),
+              num_gt_per_query * sizeof(VectorSetID));
+  }
+  out.close();
+}
+
 void MultiVectorReranker::computeCosineSimilarity(
     const Eigen::Ref<const MatrixType>& X,
     const Eigen::Ref<const MatrixType>& Y, Eigen::Ref<MatrixType> result) {
@@ -351,7 +374,8 @@ VectorGroundTruthType Loader::LoadVectorGroundTruth(
       points_num, std::vector<VectorID>(dim));
 
   for (size_t i = 0; i < points_num; ++i) {
-    in.read(reinterpret_cast<char*>((*result)[i].data()), dim * sizeof(uint32_t));
+    in.read(reinterpret_cast<char*>((*result)[i].data()),
+            dim * sizeof(uint32_t));
   }
 
   // Validate file size to ensure it matches the expected structure

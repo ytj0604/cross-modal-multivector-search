@@ -36,6 +36,9 @@ target_link_libraries(test_search_multivector_fullscan_rerank ${GTEST_LIBRARIES}
 add_executable(test_KNN_significance test_KNN_significance.cpp)
 target_link_libraries(test_KNN_significance ${GTEST_LIBRARIES} pthread ${PROJECT_NAME} Boost::program_options ${BLAS_LIBRARIES})
 
+add_executable(test_rand_vector test_rand_vector.cpp)
+target_link_libraries(test_rand_vector ${GTEST_LIBRARIES} pthread ${PROJECT_NAME} Boost::program_options ${BLAS_LIBRARIES})
+
 add_executable(test_only_build_bipartite test_only_build_bipartite.cpp)
 target_link_libraries(test_only_build_bipartite ${GTEST_LIBRARIES} pthread ${PROJECT_NAME}  Boost::program_options)
 

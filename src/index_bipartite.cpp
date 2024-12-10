@@ -2493,7 +2493,7 @@ std::vector<std::pair<uint32_t, uint32_t>> IndexBipartite::SearchMultivectorOnRo
         int32_t query_to_expand = -1;
         float max_gap = 0;
         for(size_t i = 0; i < queries.size(); ++i) {
-            float gap = (search_queues[i][current_pq_size[i] - 1].distance - search_queues[i][0].distance); // negation of cosine similarity is stored.
+            float gap = (search_queues[i][current_pq_size[i] - 1].distance - search_queues[i][0].distance) / current_pq_size[i]; // negation of cosine similarity is stored.
             if(gap > max_gap && 
                get_increased_pq_size(current_pq_size[i]) < max_pq && 
                sum_pq_size + get_increased_pq_size(current_pq_size[i]) - current_pq_size[i] <= max_pq_size_budget) {

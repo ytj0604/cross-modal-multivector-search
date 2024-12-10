@@ -29,5 +29,5 @@ def process_file(file_path, skip_lines=1):
 for n in [2, 3, 4, 5]:
     for st in ["t2i", "i2t"]:
         for i in [20, 40, 80, 120, 160, 200, 400, 600, 800, 1000]:
-            file_path = f"/mnt/dive/{n}/result_shared_visited_list/{st}_Roar_35_{i}.tsv"
+            file_path = f"/mnt/dive/{n}/no_adaptive_expansion_results/{st}_Roar_35_{i}.tsv"
             process_file(file_path, skip_lines=n)
