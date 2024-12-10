@@ -81,7 +81,7 @@
 # done
 # echo "Search experiments completed!"
 
-for i in {2..5}; do
+for i in {4..5}; do
 
   # Set paths and parameters
   prefix=/mnt/dive/${i}/
@@ -101,9 +101,9 @@ for i in {2..5}; do
 
   M_PJBP=${1:-35}
   query_multivector_size=${i}
-  beam_width_budget=(20 40 80 120 160 200 400 600 800 1000)
+  # beam_width_budget=(20 40 80 120 160 200 400 600 800 1000)
   # beam_width_budget=(1500 2000 3000 5000)
-  # beam_width_budget=(1000)
+  beam_width_budget=(200)
   min_beam_width=5
   # max_beam_width=1000
   enable_adaptive_expansion=true
