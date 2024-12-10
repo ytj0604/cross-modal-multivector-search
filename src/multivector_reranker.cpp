@@ -17,8 +17,9 @@ void MultiVectorReranker::SetQueryVector(const MatrixType& query_matrix) {
   this->query_matrix = query_matrix;
 }
 
+template <typename IDType>
 void MultiVectorReranker::Rerank(
-    VectorSetID& query_id, const std::vector<std::vector<VectorID>>& indices,
+    VectorSetID& query_id, const std::vector<std::vector<IDType>>& indices,
     std::vector<VectorSetID>& reranked_indices) {
   std::vector<VectorSetID> deduplicated_indices;
   deduplicated_indices.reserve(indices.size());
@@ -107,7 +108,7 @@ void MultiVectorReranker::RerankAllBySequentialScan(
 
 void MultiVectorReranker::RerankAllAndGenerateSetGroundTruth(
     const std::string& ground_truth_file) {
-  if(multi_vector_cardinality == 0) {
+  if (multi_vector_cardinality == 0) {
     throw std::runtime_error("Multi-vector cardinality not set.");
   }
   std::ofstream out(ground_truth_file, std::ios::binary);
@@ -263,6 +264,61 @@ MatrixType Loader::LoadEmbeddingVector(const std::string& file_path) {
   return data_matrix;
 }
 
+FloatVectorType Loader::LoadEmbeddingVectorAsFloatVector(
+    const std::string& file_path) {
+  unsigned points_num = 0;
+  unsigned dim = 0;
+
+  // Open the file in binary mode
+  std::ifstream in(file_path, std::ios::binary);
+  if (!in.is_open()) {
+    throw std::runtime_error("Cannot open file: " + file_path);
+  }
+
+  // Read the number of points and dimensions (8 bytes)
+  in.read(reinterpret_cast<char*>(&points_num), sizeof(unsigned));
+  in.read(reinterpret_cast<char*>(&dim), sizeof(unsigned));
+
+  // Verify that the file size matches the expected size
+  in.seekg(0, std::ios::end);
+  std::streampos file_size = in.tellg();
+  std::size_t expected_size =
+      sizeof(unsigned) * 2 +
+      static_cast<std::size_t>(points_num) * dim * sizeof(float);
+  if (static_cast<std::size_t>(file_size) != expected_size) {
+    std::cerr << "File size does not match expected size.\n";
+    std::cerr << "Expected size: " << expected_size
+              << " bytes, but file size is " << file_size << " bytes.\n";
+    throw std::runtime_error("Data file size mismatch.");
+  }
+
+  // Return to the position after the header
+  in.seekg(sizeof(unsigned) * 2, std::ios::beg);
+
+  // Allocate the outer vector
+  auto result = std::make_shared<std::vector<std::vector<float>>>();
+  result->reserve(points_num);
+
+  // Allocate a temporary buffer to read all the data
+  std::vector<float> buffer(points_num * dim);
+  in.read(reinterpret_cast<char*>(buffer.data()),
+          static_cast<std::streamsize>(points_num * dim * sizeof(float)));
+
+  if (!in) {
+    throw std::runtime_error("Error reading data from file: " + file_path);
+  }
+
+  // Populate the result with individual vectors for each point
+  for (unsigned i = 0; i < points_num; ++i) {
+    result->emplace_back(buffer.begin() + i * dim,
+                         buffer.begin() + (i + 1) * dim);
+  }
+
+  in.close();
+
+  return result;
+}
+
 void RecallCalculator::SetGroundTruth(GroundTruthType ground_truth) {
   this->ground_truth = ground_truth;
 }
@@ -397,3 +453,12 @@ VectorGroundTruthType Loader::LoadVectorGroundTruth(
   in.close();
   return result;
 }
+
+template void MultiVectorReranker::Rerank<unsigned int>(
+    VectorSetID& query_id,
+    const std::vector<std::vector<unsigned int>>& indices,
+    std::vector<VectorSetID>& reranked_indices);
+
+template void MultiVectorReranker::Rerank<size_t>(
+    VectorSetID& query_id, const std::vector<std::vector<size_t>>& indices,
+    std::vector<VectorSetID>& reranked_indices);
