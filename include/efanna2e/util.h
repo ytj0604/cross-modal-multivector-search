@@ -3,8 +3,7 @@
 // Modified  by 陈萌 on 2024/4/30
 // 
 
-#ifndef EFANNA2E_UTIL_H
-#define EFANNA2E_UTIL_H
+#pragma once
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -264,5 +263,3 @@ class TimeMetric {
 };
 
 }  // namespace efanna2e
-
-#endif  // EFANNA2E_UTIL_H

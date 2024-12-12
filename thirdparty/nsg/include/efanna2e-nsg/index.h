@@ -5,14 +5,15 @@
 //
 
 #pragma once
+
 #include <cstddef>
 #include <string>
 #include <vector>
 #include <fstream>
-#include "distance.h"
-#include "parameters.h"
+#include "efanna2e-nsg/distance.h"
+#include "efanna2e-nsg/parameters.h"
 
-namespace efanna2e {
+namespace efanna2e_nsg {
 
 class Index {
  public:
@@ -23,19 +24,12 @@ class Index {
 
   virtual void Build(size_t n, const float *data, const Parameters &parameters) = 0;
 
-  // virtual void BuildBipartite(size_t n_sq, const float *sq_data, size_t n_bp, const float *bp_data, const Parameters &parameters) = 0;
-  // virtual void Search(
-  //     const float *query,
-  //     const float *x,
-  //     size_t k,
-  //     const Parameters &parameters,
-  //     unsigned *indices);
   virtual void Search(
       const float *query,
       const float *x,
       size_t k,
       const Parameters &parameters,
-      unsigned *indices, float* res_dists) = 0;
+      unsigned *indices) = 0;
 
   virtual void Save(const char *filename) = 0;
 
@@ -48,22 +42,12 @@ class Index {
   inline size_t GetSizeOfDataset() const { return nd_; }
 
   inline const float *GetDataset() const { return data_; }
-
-  inline const float *GetSampledQuerySet() const {return data_sq_; }
-
-  inline const float *GetBasePointSet() const {return data_bp_; }
-  
  protected:
   const size_t dimension_;
-  const float *data_;
-  const float *data_sq_;
-  const float *data_bp_;
+  const float *data_ = nullptr;
   size_t nd_;
-  size_t nd_sq_;
   bool has_built;
-  bool bipartite_ = false;
-  Distance* distance_;
-  Metric metric_;
+  Distance* distance_ = nullptr;
 };
 
 }

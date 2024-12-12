@@ -3,12 +3,11 @@
 //
 // This source code is licensed under the MIT license.
 //
-
 #pragma once
 
 #include <stdexcept>
 
-namespace efanna2e {
+namespace efanna2e_nsg {
 
 class NotImplementedException : public std::logic_error {
  public:

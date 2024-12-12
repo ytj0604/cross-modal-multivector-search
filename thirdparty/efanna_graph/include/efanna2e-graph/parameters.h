@@ -5,10 +5,11 @@
 //
 
 #pragma once
+
 #include <unordered_map>
 #include <sstream>
 #include <typeinfo>
-namespace efanna2e {
+namespace efanna2e_graph {
 
 class Parameters {
  public:

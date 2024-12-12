@@ -4,8 +4,7 @@
 // This source code is licensed under the MIT license.
 //
 
-#ifndef EFANNA2E_GRAPH_H
-#define EFANNA2E_GRAPH_H
+#pragma once
 
 #include <cstddef>
 #include <mutex>
@@ -227,5 +226,3 @@ class NeighborPriorityQueue {
 };
 
 }  // namespace efanna2e
-
-#endif  // EFANNA2E_GRAPH_H

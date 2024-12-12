@@ -8,7 +8,7 @@
 
 #include <stdexcept>
 
-namespace efanna2e {
+namespace efanna2e_graph {
 
 class NotImplementedException : public std::logic_error {
  public:

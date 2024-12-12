@@ -3,8 +3,7 @@
 // Modified  by 陈萌 on 2024/4/30.
 //
 
-#ifndef EFANNA2E_DISTANCE_H
-#define EFANNA2E_DISTANCE_H
+#pragma once
 
 #include <immintrin.h>
 #include <x86intrin.h>
@@ -322,4 +321,3 @@ class DistanceFastL2 : public DistanceInnerProduct {
 };
 }  // namespace efanna2e
 
-#endif  // EFANNA2E_DISTANCE_H

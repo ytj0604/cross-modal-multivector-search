@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.17)
 
 project(efanna2e)
 add_subdirectory(thirdparty/DiskANN)
+add_subdirectory(thirdparty/nsg)
+add_subdirectory(thirdparty/efanna_graph)
 include_directories(${PROJECT_SOURCE_DIR}/include)
 include_directories(${PROJECT_SOURCE_DIR}/thirdparty/robin-map/include)
 include_directories(${PROJECT_SOURCE_DIR}/include/eigen-3.4.0)
