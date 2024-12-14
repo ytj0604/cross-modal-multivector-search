@@ -1,10 +1,11 @@
 #include "efanna2e-nsg/index_nsg.h"
 
 #include <omp.h>
+
 #include <bitset>
+#include <boost/dynamic_bitset.hpp>
 #include <chrono>
 #include <cmath>
-#include <boost/dynamic_bitset.hpp>
 
 #include "efanna2e-nsg/exceptions.h"
 #include "efanna2e-nsg/parameters.h"
@@ -16,18 +17,18 @@ IndexNSG::IndexNSG(const size_t dimension, const size_t n, Metric m,
     : Index(dimension, n, m), initializer_{initializer} {}
 
 IndexNSG::~IndexNSG() {
-    if (distance_ != nullptr) {
-        delete distance_;
-        distance_ = nullptr;
-    }
-    if (initializer_ != nullptr) {
-        delete initializer_;
-        initializer_ = nullptr;
-    }
-    if (opt_graph_ != nullptr) {
-        delete opt_graph_;
-        opt_graph_ = nullptr;
-    }
+  if (distance_ != nullptr) {
+    delete distance_;
+    distance_ = nullptr;
+  }
+  if (initializer_ != nullptr) {
+    delete initializer_;
+    initializer_ = nullptr;
+  }
+  if (opt_graph_ != nullptr) {
+    delete opt_graph_;
+    opt_graph_ = nullptr;
+  }
 }
 
 void IndexNSG::Save(const char *filename) {
@@ -95,7 +96,8 @@ void IndexNSG::get_neighbors(const float *query, const Parameters &parameter,
 
   boost::dynamic_bitset<> flags{nd_, 0};
   L = 0;
-  for (unsigned i = 0; i < init_ids.size() && i < final_graph_[ep_].size(); i++) {
+  for (unsigned i = 0; i < init_ids.size() && i < final_graph_[ep_].size();
+       i++) {
     init_ids[i] = final_graph_[ep_][i];
     flags[init_ids[i]] = true;
     L++;
@@ -163,7 +165,8 @@ void IndexNSG::get_neighbors(const float *query, const Parameters &parameter,
   // initializer_->Search(query, nullptr, L, parameter, init_ids.data());
 
   L = 0;
-  for (unsigned i = 0; i < init_ids.size() && i < final_graph_[ep_].size(); i++) {
+  for (unsigned i = 0; i < init_ids.size() && i < final_graph_[ep_].size();
+       i++) {
     init_ids[i] = final_graph_[ep_][i];
     flags[init_ids[i]] = true;
     L++;
@@ -251,9 +254,9 @@ void IndexNSG::sync_prune(unsigned q, std::vector<Neighbor> &pool,
   for (unsigned nn = 0; nn < final_graph_[q].size(); nn++) {
     unsigned id = final_graph_[q][nn];
     if (flags[id]) continue;
-    float dist =
-        distance_->compare(data_ + dimension_ * (size_t)q,
-                           data_ + dimension_ * (size_t)id, (unsigned)dimension_);
+    float dist = distance_->compare(data_ + dimension_ * (size_t)q,
+                                    data_ + dimension_ * (size_t)id,
+                                    (unsigned)dimension_);
     pool.push_back(Neighbor(id, dist, true));
   }
 
@@ -331,9 +334,9 @@ void IndexNSG::InterInsert(unsigned n, unsigned range,
             occlude = true;
             break;
           }
-          float djk = distance_->compare(data_ + dimension_ * (size_t)result[t].id,
-                                         data_ + dimension_ * (size_t)p.id,
-                                         (unsigned)dimension_);
+          float djk = distance_->compare(
+              data_ + dimension_ * (size_t)result[t].id,
+              data_ + dimension_ * (size_t)p.id, (unsigned)dimension_);
           if (djk < p.distance /* dik */) {
             occlude = true;
             break;
@@ -399,7 +402,8 @@ void IndexNSG::Link(const Parameters &parameters, SimpleNeighbor *cut_graph_) {
   }
 }
 
-void IndexNSG::Build(size_t n, const float *data, const Parameters &parameters) {
+void IndexNSG::Build(size_t n, const float *data,
+                     const Parameters &parameters) {
   std::string nn_graph_path = parameters.Get<std::string>("nn_graph_path");
   unsigned range = parameters.Get<unsigned>("R");
   Load_nn_graph(nn_graph_path.c_str());
@@ -439,7 +443,8 @@ void IndexNSG::Build(size_t n, const float *data, const Parameters &parameters) 
   delete cut_graph_;
 }
 
-void IndexNSG::BuildLoadedGraph(size_t n, const float *data, const Parameters &parameters) {
+void IndexNSG::BuildLoadedGraph(size_t n, const float *data,
+                                const Parameters &parameters) {
   unsigned range = parameters.Get<unsigned>("R");
   data_ = data;
   init_graph(parameters);
@@ -475,9 +480,7 @@ void IndexNSG::BuildLoadedGraph(size_t n, const float *data, const Parameters &p
 
   has_built = true;
   delete cut_graph_;
-
 }
-
 
 void IndexNSG::Search(const float *query, const float *x, size_t K,
                       const Parameters &parameters, unsigned *indices) {
@@ -505,8 +508,8 @@ void IndexNSG::Search(const float *query, const float *x, size_t K,
 
   for (unsigned i = 0; i < init_ids.size(); i++) {
     unsigned id = init_ids[i];
-    float dist =
-        distance_->compare(data_ + dimension_ * id, query, (unsigned)dimension_);
+    float dist = distance_->compare(data_ + dimension_ * id, query,
+                                    (unsigned)dimension_);
     retset[i] = Neighbor(id, dist, true);
     // flags[id] = true;
   }
@@ -524,8 +527,8 @@ void IndexNSG::Search(const float *query, const float *x, size_t K,
         unsigned id = final_graph_[n][m];
         if (flags[id]) continue;
         flags[id] = 1;
-        float dist =
-            distance_->compare(query, data_ + dimension_ * id, (unsigned)dimension_);
+        float dist = distance_->compare(query, data_ + dimension_ * id,
+                                        (unsigned)dimension_);
         if (dist >= retset[L - 1].distance) continue;
         Neighbor nn(id, dist, true);
         int r = InsertIntoPool(retset.data(), L, nn);
@@ -544,9 +547,15 @@ void IndexNSG::Search(const float *query, const float *x, size_t K,
 }
 
 void IndexNSG::SearchWithOptGraph(const float *query, size_t K,
-                                  const Parameters &parameters, unsigned *indices) {
+                                  const Parameters &parameters,
+                                  unsigned *indices) {
   unsigned L = parameters.Get<unsigned>("L_search");
-  DistanceFastL2 *dist_fast = (DistanceFastL2 *)distance_;
+  // We need to use both ip and l2, especially focusing on ip (tjyoon)
+  // We though NSG pre-computes the norm, we use ip so it is not used.
+  // Though, we use SearchWithOptGraph since it is more optimized (e.g.,
+  // prefetching) 
+  
+  //DistanceFastL2 *dist_fast = (DistanceFastL2 *)distance_;
 
   std::vector<Neighbor> retset(L + 1);
   std::vector<unsigned> init_ids(L);
@@ -582,9 +591,9 @@ void IndexNSG::SearchWithOptGraph(const float *query, size_t K,
     unsigned id = init_ids[i];
     if (id >= nd_) continue;
     float *x = (float *)(opt_graph_ + node_size * id);
-    float norm_x = *x;
+    // float norm_x = *x;
     x++;
-    float dist = dist_fast->compare(x, query, norm_x, (unsigned)dimension_);
+    float dist = distance_->compare(x, query, (unsigned)dimension_);
     retset[i] = Neighbor(id, dist, true);
     flags[id] = true;
     L++;
@@ -611,9 +620,9 @@ void IndexNSG::SearchWithOptGraph(const float *query, size_t K,
         if (flags[id]) continue;
         flags[id] = 1;
         float *data = (float *)(opt_graph_ + node_size * id);
-        float norm = *data;
+        // float norm = *data;
         data++;
-        float dist = dist_fast->compare(query, data, norm, (unsigned)dimension_);
+        float dist = distance_->compare(query, data, (unsigned)dimension_);
         if (dist >= retset[L - 1].distance) continue;
         Neighbor nn(id, dist, true);
         int r = InsertIntoPool(retset.data(), L, nn);
@@ -639,10 +648,12 @@ void IndexNSG::OptimizeGraph(float *data) {  // use after build or load
   neighbor_len = (width + 1) * sizeof(unsigned);
   node_size = data_len + neighbor_len;
   opt_graph_ = (char *)malloc(node_size * nd_);
+  // TODO: tjyoon
   DistanceFastL2 *dist_fast = (DistanceFastL2 *)distance_;
   for (unsigned i = 0; i < nd_; i++) {
     char *cur_node_offset = opt_graph_ + i * node_size;
-    float cur_norm = dist_fast->norm(data_ + i * dimension_, dimension_);
+    // float cur_norm = dist_fast->norm(data_ + i * dimension_, dimension_);
+    float cur_norm = 0;
     std::memcpy(cur_node_offset, &cur_norm, sizeof(float));
     std::memcpy(cur_node_offset + sizeof(float), data_ + i * dimension_,
                 data_len - sizeof(float));
@@ -657,7 +668,8 @@ void IndexNSG::OptimizeGraph(float *data) {  // use after build or load
   CompactGraph().swap(final_graph_);
 }
 
-void IndexNSG::DFS(boost::dynamic_bitset<> &flag, unsigned root, unsigned &cnt) {
+void IndexNSG::DFS(boost::dynamic_bitset<> &flag, unsigned root,
+                   unsigned &cnt) {
   unsigned tmp = root;
   std::stack<unsigned> s;
   s.push(root);
@@ -738,4 +750,4 @@ void IndexNSG::tree_grow(const Parameters &parameter) {
     }
   }
 }
-}
+}  // namespace efanna2e_nsg

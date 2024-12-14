@@ -2,9 +2,6 @@
 
 build_dir="$(dirname "$(realpath "$0")")/../../build/"
 
-M=35
-ef_construction=500
-
 dist=ip
 
 prefix=/mnt/dive/
@@ -27,7 +24,7 @@ for i in {1..5}; do
     
     ${build_dir}/tests/build_nsg \
       --base_data_path ${path}/coco_test_${i}_${datatype}_embs.fbin \
-      --index_save_path ${path}/${datatype}_nsg_${M}.index \
+      --index_save_path ${path}/${datatype}_nsg.index \
       --knn_K ${knn_K} --knn_L ${knn_L} --knn_iter ${knn_iter} --knn_S ${knn_S} --knn_R ${knn_R} \
       --nsg_L ${nsg_L} --nsg_R ${nsg_R} --nsg_C ${nsg_C} \
       --dist ${dist}

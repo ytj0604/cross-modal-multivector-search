@@ -221,7 +221,7 @@ namespace efanna2e_graph{
 #endif
 #endif
 #endif
-      return result;
+      return -1.0 * result;
     }
 
   };

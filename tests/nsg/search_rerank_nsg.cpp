@@ -1,3 +1,5 @@
+#include <efanna2e-nsg/index_nsg.h>
+#include <efanna2e-nsg/util.h>
 #include <gtest/gtest.h>
 #include <omp.h>
 
@@ -13,6 +15,7 @@
 #include <vector>
 
 #include "multivector_reranker.h"
+
 namespace po = boost::program_options;
 
 int main(int argc, char **argv) {
@@ -25,7 +28,6 @@ int main(int argc, char **argv) {
   uint32_t query_multivector_size;
   uint32_t k;
   std::string dist;
-  uint32_t dim;
   uint32_t total_beam_width;
   // Currently not used; will be used in future after implementing adaptive
   // expansion.
@@ -88,11 +90,30 @@ int main(int argc, char **argv) {
   auto query_matrix = Loader::LoadEmbeddingVector(query_file);
   auto data_matrix = Loader::LoadEmbeddingVector(base_data_file);
   auto queries_ = Loader::LoadEmbeddingVectorAsFloatVector(query_file);
-  auto queries = queries_->data();
+  auto data_ = Loader::LoadEmbeddingVectorAsFloatVector(base_data_file);
+
+  // This might need to be changed.
   uint32_t num_query_sets = query_matrix.rows() / query_multivector_size;
   assert(num_query_sets * query_multivector_size == query_matrix.rows());
 
-  dim = data_matrix.cols();
+  uint32_t dim = queries_->at(0).size();
+  uint32_t num_query_vectors = queries_->size();
+  float *query_load = new float[num_query_vectors * dim];
+  for (size_t i = 0; i < num_query_vectors; i++) {
+    for (size_t j = 0; j < dim; j++) {
+      query_load[i * dim + j] = queries_->at(i)[j];
+    }
+  }
+
+  // Dimension should be the same for l2 or ip distance.
+  assert(dim = data_->at(0).size());
+  uint32_t num_data_vectors = data_->size();
+  float *data_load = new float[num_data_vectors * dim];
+  for (size_t i = 0; i < num_data_vectors; i++) {
+    for (size_t j = 0; j < dim; j++) {
+      data_load[i * dim + j] = data_->at(i)[j];
+    }
+  }
 
   MultiVectorReranker reranker;
   reranker.SetDataVector(data_matrix);
@@ -119,33 +140,40 @@ int main(int argc, char **argv) {
     return -1;
   }
 
-  std::shared_ptr<hnswlib::SpaceInterface<float>> sp;
+  efanna2e_nsg::Metric metric;
   if (dist == "l2") {
-    sp = std::make_shared<hnswlib::L2Space>(dim);
+    metric = efanna2e_nsg::FAST_L2;
   } else if (dist == "ip") {
-    sp = std::make_shared<hnswlib::InnerProductSpace>(dim);
+    metric = efanna2e_nsg::INNER_PRODUCT;
   } else {
-    std::cout << "Unknown distance type: " << dist << std::endl;
+    std::cerr << "Invalid distance metric: " << dist << std::endl;
     return -1;
   }
-
-  auto hnsw = new hnswlib::HierarchicalNSW<float>(sp.get(), index_path);
-  hnsw->setEf(total_beam_width / query_multivector_size);
+  efanna2e_nsg::IndexNSG index(dim, num_data_vectors, metric, nullptr);
+  index.Load(index_path.c_str());
+  index.OptimizeGraph(data_load);
+  efanna2e_nsg::Parameters params;
+  auto per_query_vector_beam_width = total_beam_width / query_multivector_size;
+  params.Set<unsigned>("L_search", per_query_vector_beam_width);
+  params.Set<unsigned>("P_search", per_query_vector_beam_width);
 
   double total_search_time = 0;
   double total_rerank_time = 0;
   double total_recall = 0;
 
-  std::vector<std::vector<hnswlib::labeltype>> indices(query_multivector_size);
   std::vector<VectorSetID> reranked_indices;
+  std::vector<std::vector<VectorID>> indices(
+      query_multivector_size,
+      std::vector<VectorID>(per_query_vector_beam_width, 0));
 
   for (uint32_t i = 0; i < num_query_sets; ++i) {
     auto query_vec_index_start = i * query_multivector_size;
     auto search_start = std::chrono::high_resolution_clock::now();
     for (int32_t j = 0; j < query_multivector_size; j++) {
-      indices[j].clear();
-      hnsw->searchKnn(queries[query_vec_index_start + j].data(),
-                      total_beam_width / query_multivector_size, indices[j]);
+      std::fill(indices[j].begin(), indices[j].end(), 0);
+      index.SearchWithOptGraph(
+          query_load + (i * query_multivector_size + j) * dim,
+          per_query_vector_beam_width, params, indices[j].data());
     }
     auto search_end = std::chrono::high_resolution_clock::now();
     reranker.Rerank(i, indices, reranked_indices);
@@ -182,7 +210,8 @@ int main(int argc, char **argv) {
     tsv_out << "\n";
   }
   tsv_out.close();
-  delete hnsw;
+  delete[] query_load;
+  delete[] data_load;
   double QPS = num_query_sets / (total_search_time + total_rerank_time);
   double recall = total_recall / num_query_sets;
   std::ofstream evaluation_out(evaluation_save_path, std::ios::app);
