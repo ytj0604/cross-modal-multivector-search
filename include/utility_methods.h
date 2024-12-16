@@ -9,16 +9,16 @@
 // logic.
 class UtilityMethods {
  public:
-  static void TestKNNSignificance(GroundTruthType sgt,
-                                  VectorGroundTruthType vgt,
+  static void TestKNNSignificance(SetGroundTruthVectorPtr sgt,
+                                  VectorGroundTruthVectorPtr vgt,
                                   uint32_t multivector_cardinality,
                                   std::string output, uint32_t k,
                                   uint32_t num_raw_vector_results);
   static void GenerateRandomVectorsAndStore(std::string output,
                                             uint32_t num_vectors,
                                             uint32_t vector_dimension);
-  static void TestCosineSimilarityDist(MatrixType query_vector,
-                                       MatrixType data_vector,
+  static void TestCosineSimilarityDist(Matrix query_vector,
+                                       Matrix data_vector,
                                        std::string output_file_path);
 
  private:

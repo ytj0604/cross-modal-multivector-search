@@ -5,8 +5,8 @@
 #include <thread>
 #include <condition_variable>
 
-void UtilityMethods::TestKNNSignificance(GroundTruthType sgt,
-                                         VectorGroundTruthType vgt_,
+void UtilityMethods::TestKNNSignificance(SetGroundTruthVectorPtr sgt,
+                                         VectorGroundTruthVectorPtr vgt_,
                                          uint32_t multivector_cardinality,
                                          std::string output, uint32_t k,
                                          uint32_t num_raw_vector_results) {
@@ -247,8 +247,8 @@ std::vector<float> UtilityMethods::generate_normalized_vector(int d) {
 //   std::cout << "[Info] Cosine similarity distances written to "
 //             << output_file_path << "\n";
 // }
-void UtilityMethods::TestCosineSimilarityDist(MatrixType query_vector,
-                                              MatrixType data_vector,
+void UtilityMethods::TestCosineSimilarityDist(Matrix query_vector,
+                                              Matrix data_vector,
                                               std::string output_file_path) {
   const int num_query_to_test = 400;
   const uint32_t num_division = 200;

@@ -1,5 +1,7 @@
 #include <multivector_reranker.h>
 
+#include <unordered_map>
+
 void MultiVectorReranker::SetVectorID2VectorSetIDMapping(
     std::function<VectorSetID(VectorID)> f) {
   vector_id_to_vector_set_id = f;
@@ -9,11 +11,11 @@ void MultiVectorReranker::SetMultiVectorCardinality(uint32_t cardinality) {
   this->multi_vector_cardinality = cardinality;
 }
 
-void MultiVectorReranker::SetDataVector(const MatrixType& data_matrix) {
+void MultiVectorReranker::SetDataVector(const Matrix& data_matrix) {
   this->data_matrix = data_matrix;
 }
 
-void MultiVectorReranker::SetQueryVector(const MatrixType& query_matrix) {
+void MultiVectorReranker::SetQueryVector(const Matrix& query_matrix) {
   this->query_matrix = query_matrix;
 }
 
@@ -38,7 +40,7 @@ void MultiVectorReranker::Rerank(
     return;
   }
 
-  Eigen::Map<const MatrixType> query_set(
+  Eigen::Map<const Matrix> query_set(
       query_matrix.data() +
           query_id * multi_vector_cardinality * query_matrix.cols(),
       multi_vector_cardinality, query_matrix.cols());
@@ -47,12 +49,21 @@ void MultiVectorReranker::Rerank(
   relevance_scores.reserve(deduplicated_indices.size());
 
   for (VectorSetID data_set_id : deduplicated_indices) {
-    Eigen::Map<const MatrixType> data_set(
-        data_matrix.data() +
-            data_set_id * multi_vector_cardinality * data_matrix.cols(),
-        multi_vector_cardinality, data_matrix.cols());
-    float relevance = set_to_set_distance_metric(query_set, data_set);
-    relevance_scores.emplace_back(relevance, data_set_id);
+    if (vector_set_id_to_vector_id) {
+      auto [vector_id, cardinality] = vector_set_id_to_vector_id(data_set_id);
+      Eigen::Map<const Matrix> data_set(
+          data_matrix.data() + vector_id * data_matrix.cols(), cardinality,
+          data_matrix.cols());
+      float relevance = set_to_set_distance_metric(query_set, data_set);
+      relevance_scores.emplace_back(relevance, data_set_id);
+    } else {
+      Eigen::Map<const Matrix> data_set(
+          data_matrix.data() +
+              data_set_id * multi_vector_cardinality * data_matrix.cols(),
+          multi_vector_cardinality, data_matrix.cols());
+      float relevance = set_to_set_distance_metric(query_set, data_set);
+      relevance_scores.emplace_back(relevance, data_set_id);
+    }
   }
 
   size_t top_k =
@@ -72,7 +83,7 @@ void MultiVectorReranker::Rerank(
 
 void MultiVectorReranker::RerankAllBySequentialScan(
     VectorSetID& query_id, std::vector<VectorSetID>& reranked_indices) {
-  Eigen::Map<const MatrixType> query_set(
+  Eigen::Map<const Matrix> query_set(
       query_matrix.data() +
           query_id * multi_vector_cardinality * query_matrix.cols(),
       multi_vector_cardinality, query_matrix.cols());
@@ -83,7 +94,7 @@ void MultiVectorReranker::RerankAllBySequentialScan(
   for (VectorSetID data_set_id = 0;
        data_set_id < data_matrix.rows() / multi_vector_cardinality;
        ++data_set_id) {
-    Eigen::Map<const MatrixType> data_set(
+    Eigen::Map<const Matrix> data_set(
         data_matrix.data() +
             data_set_id * multi_vector_cardinality * data_matrix.cols(),
         multi_vector_cardinality, data_matrix.cols());
@@ -130,27 +141,27 @@ void MultiVectorReranker::RerankAllAndGenerateSetGroundTruth(
 }
 
 void MultiVectorReranker::computeCosineSimilarity(
-    const Eigen::Ref<const MatrixType>& X,
-    const Eigen::Ref<const MatrixType>& Y, Eigen::Ref<MatrixType> result) {
+    const Eigen::Ref<const Matrix>& X, const Eigen::Ref<const Matrix>& Y,
+    Eigen::Ref<Matrix> result) {
   result = X * Y.transpose();
 }
 
 float MultiVectorReranker::computeSmoothChamferDistance(
-    const Eigen::Ref<const MatrixType>& img_embs,
-    const Eigen::Ref<const MatrixType>& txt_embs) {
+    const Eigen::Ref<const Matrix>& img_embs,
+    const Eigen::Ref<const Matrix>& txt_embs) {
   // Compute cosine similarity
-  MatrixType dist(img_embs.rows(), txt_embs.rows());
+  Matrix dist(img_embs.rows(), txt_embs.rows());
   vector_distance_metric(img_embs, txt_embs, dist);
 
   // Compute temp_dist1 and temp_dist2
-  MatrixType temp_dist1 = temperature * temperature_txt_scale * dist;
-  MatrixType temp_dist2 = temperature * dist;
+  Matrix temp_dist1 = temperature * temperature_txt_scale * dist;
+  Matrix temp_dist2 = temperature * dist;
 
   // Compute row-wise max for temp_dist1
   Eigen::VectorXf row_max = temp_dist1.rowwise().maxCoeff();  // Size: (n_img)
 
   // Subtract row_max and exponentiate for temp_dist1
-  MatrixType exp1 =
+  Matrix exp1 =
       (temp_dist1.colwise() - row_max).array().exp();  // Size: (n_img, n_txt)
 
   // Compute row-wise sum and log for temp_dist1
@@ -166,9 +177,9 @@ float MultiVectorReranker::computeSmoothChamferDistance(
   Eigen::VectorXf col_max = temp_dist2.colwise().maxCoeff();  // Size: (n_txt)
 
   // Subtract col_max and exponentiate for temp_dist2
-  MatrixType exp2 = (temp_dist2.rowwise() - col_max.transpose())
-                        .array()
-                        .exp();  // Size: (n_img, n_txt)
+  Matrix exp2 = (temp_dist2.rowwise() - col_max.transpose())
+                    .array()
+                    .exp();  // Size: (n_img, n_txt)
 
   // Compute column-wise sum and log for temp_dist2
   Eigen::VectorXf col_sum = exp2.colwise().sum();  // Size: (n_txt)
@@ -182,29 +193,41 @@ float MultiVectorReranker::computeSmoothChamferDistance(
   return (term1 + term2) / denominator;
 }
 
+float MultiVectorReranker::ComputeSummedMaxSimilarity(
+    const Eigen::Ref<const Matrix>& img_embs,
+    const Eigen::Ref<const Matrix>& txt_embs) {
+  Matrix dist(img_embs.rows(), txt_embs.rows());
+  vector_distance_metric(img_embs, txt_embs, dist);
+  return dist.rowwise().maxCoeff().sum();
+}
+
 void MultiVectorReranker::SetDistanceMetric(
     const std::string& set_to_set_metric,
     const std::string& vector_dist_metric) {
   // Map for vector distance metrics (pairwise distances)
   static const std::unordered_map<
-      std::string, std::function<void(const Eigen::Ref<const MatrixType>&,
-                                      const Eigen::Ref<const MatrixType>&,
-                                      Eigen::Ref<MatrixType>)>>
-      vector_metric_map = {
-          {"cosine", [this](const Eigen::Ref<const MatrixType>& X,
-                            const Eigen::Ref<const MatrixType>& Y,
-                            Eigen::Ref<MatrixType> result) {
-             this->computeCosineSimilarity(X, Y, result);
-           }}};
+      std::string,
+      std::function<void(const Eigen::Ref<const Matrix>&,
+                         const Eigen::Ref<const Matrix>&, Eigen::Ref<Matrix>)>>
+      vector_metric_map = {{"cosine", [this](const Eigen::Ref<const Matrix>& X,
+                                             const Eigen::Ref<const Matrix>& Y,
+                                             Eigen::Ref<Matrix> result) {
+                              this->computeCosineSimilarity(X, Y, result);
+                            }}};
 
   // Map for set-to-set distance metrics
   static const std::unordered_map<
-      std::string, std::function<float(const Eigen::Ref<const MatrixType>&,
-                                       const Eigen::Ref<const MatrixType>&)>>
+      std::string, std::function<float(const Eigen::Ref<const Matrix>&,
+                                       const Eigen::Ref<const Matrix>&)>>
       set_to_set_metric_map = {
-          {"smooth_chamfer", [this](const Eigen::Ref<const MatrixType>& X,
-                                    const Eigen::Ref<const MatrixType>& Y) {
+          {"smooth_chamfer",
+           [this](const Eigen::Ref<const Matrix>& X,
+                  const Eigen::Ref<const Matrix>& Y) {
              return this->computeSmoothChamferDistance(X, Y);
+           }},
+          {"summed_max_similarity", [this](const Eigen::Ref<const Matrix>& X,
+                                           const Eigen::Ref<const Matrix>& Y) {
+             return this->ComputeSummedMaxSimilarity(X, Y);
            }}};
 
   // Resolve vector distance metric
@@ -218,7 +241,7 @@ void MultiVectorReranker::SetDistanceMetric(
   set_to_set_distance_metric = set_to_set_metric_it->second;
 }
 
-MatrixType Loader::LoadEmbeddingVector(const std::string& file_path) {
+Matrix Loader::LoadEmbeddingVector(const std::string& file_path) {
   unsigned points_num = 0;
   unsigned dim = 0;
 
@@ -249,7 +272,7 @@ MatrixType Loader::LoadEmbeddingVector(const std::string& file_path) {
   in.seekg(sizeof(unsigned) * 2, std::ios::beg);
 
   // Allocate the Eigen matrix
-  MatrixType data_matrix(points_num, dim);
+  Matrix data_matrix(points_num, dim);
 
   // Read the data directly into the Eigen matrix
   in.read(reinterpret_cast<char*>(data_matrix.data()),
@@ -264,7 +287,7 @@ MatrixType Loader::LoadEmbeddingVector(const std::string& file_path) {
   return data_matrix;
 }
 
-FloatVectorType Loader::LoadEmbeddingVectorAsFloatVector(
+FloatVectorPtr Loader::LoadEmbeddingVectorAsFloatVector(
     const std::string& file_path) {
   unsigned points_num = 0;
   unsigned dim = 0;
@@ -319,7 +342,7 @@ FloatVectorType Loader::LoadEmbeddingVectorAsFloatVector(
   return result;
 }
 
-void RecallCalculator::SetGroundTruth(GroundTruthType ground_truth) {
+void RecallCalculator::SetGroundTruth(SetGroundTruthVectorPtr ground_truth) {
   this->ground_truth = ground_truth;
 }
 
@@ -357,7 +380,33 @@ double RecallCalculator::ComputeRecall(
   return static_cast<double>(num_relevant) / k;
 }
 
-GroundTruthType Loader::LoadGroundTruth(const std::string& file_path) {
+double RecallCalculator::ComputePairedRecall(
+    VectorSetID query_id, const std::vector<VectorSetID>& reranked_indices) {
+  if (paired_ground_truth == nullptr) {
+    throw std::runtime_error("Paired ground truth not set.");
+  }
+  if (k == 0) {
+    throw std::runtime_error("Recall@k not set.");
+  }
+
+  // Access the ground truth for the given query
+  const auto& gt_for_this_query = paired_ground_truth(query_id);
+  auto duration_start = gt_for_this_query.first;
+  auto duration_end = gt_for_this_query.first + gt_for_this_query.second;
+  const size_t actual_k =
+      std::min(static_cast<size_t>(k), reranked_indices.size());
+  // In the context of retrieval task, if any of the relevant data is found,
+  // then recall is 1, otherwise 0.
+  for (size_t i = 0; i < actual_k; ++i) {
+    if (reranked_indices[i] >= duration_start &&
+        reranked_indices[i] < duration_end) {
+      return 1.0;
+    }
+  }
+  return 0.0;
+}
+
+SetGroundTruthVectorPtr Loader::LoadGroundTruth(const std::string& file_path) {
   // Open the file in binary mode
   std::ifstream in(file_path, std::ios::binary);
   if (!in.is_open()) {
@@ -413,7 +462,7 @@ GroundTruthType Loader::LoadGroundTruth(const std::string& file_path) {
   return ground_truth;
 }
 
-VectorGroundTruthType Loader::LoadVectorGroundTruth(
+VectorGroundTruthVectorPtr Loader::LoadVectorGroundTruth(
     const std::string& file_path) {
   std::ifstream in(file_path, std::ios::binary);
   if (!in.is_open()) {
@@ -434,8 +483,6 @@ VectorGroundTruthType Loader::LoadVectorGroundTruth(
             dim * sizeof(uint32_t));
   }
 
-  // Validate file size to ensure it matches the expected structure
-  std::ios::pos_type cursor_position = in.tellg();
   in.seekg(0, std::ios::end);
   std::ios::pos_type file_size = in.tellg();
 
@@ -452,6 +499,81 @@ VectorGroundTruthType Loader::LoadVectorGroundTruth(
 
   in.close();
   return result;
+}
+
+std::pair<std::function<VectorSetID(VectorID)>,
+          std::function<std::pair<VectorID, Cardinality>(VectorSetID)>>
+Loader::LoadVectorCardinalityMappingAndGetBothMappings(std::string& file_path) {
+  std::ifstream in(file_path, std::ios::binary);
+  if (!in.is_open()) {
+    std::cerr << "Error: Unable to open file " << file_path << std::endl;
+    throw std::runtime_error("File open error");
+  }
+  uint32_t num_data;
+  in.read(reinterpret_cast<char*>(&num_data), sizeof(uint32_t));
+
+  auto vector_id_to_vector_set_id_map =
+      std::make_shared<std::unordered_map<VectorID, VectorSetID>>();
+  auto vector_set_id_to_vector_id_map = std::make_shared<
+      std::unordered_map<VectorSetID, std::pair<VectorID, Cardinality>>>();
+  VectorID vector_id_offset = 0;
+  for (VectorSetID i = 0; i < num_data; ++i) {
+    Cardinality cardinality;
+    in.read(reinterpret_cast<char*>(&cardinality), sizeof(cardinality));
+    (*vector_set_id_to_vector_id_map)[i] =
+        std::make_pair(vector_id_offset, cardinality);
+    for (uint32_t j = 0; j < cardinality; ++j) {
+      (*vector_id_to_vector_set_id_map)[vector_id_offset] = i;
+      ++vector_id_offset;
+    }
+  }
+
+  size_t expected_size = sizeof(uint32_t) + num_data * sizeof(uint32_t);
+  in.seekg(0, std::ios::end);
+  if (in.tellg() != expected_size) {
+    std::cerr << "Error: File size mismatch. Expected " << expected_size
+              << " bytes but got " << in.tellg() << " bytes." << std::endl;
+    throw std::runtime_error("File size validation failed");
+  }
+  in.close();
+  return std::make_pair(
+      [vector_id_to_vector_set_id_map](VectorID vector_id) {
+        return vector_id_to_vector_set_id_map->at(vector_id);
+      },
+      [vector_set_id_to_vector_id_map](VectorSetID vector_set_id) {
+        return vector_set_id_to_vector_id_map->at(vector_set_id);
+      });
+}
+
+GroundTruthMapping Loader::LoadQueryDataPairMappingAsFunction(
+    std::string& file_path) {
+  std::ifstream in(file_path, std::ios::binary);
+  if (!in.is_open()) {
+    std::cerr << "Error: Unable to open file " << file_path << std::endl;
+    throw std::runtime_error("File open error");
+  }
+  uint32_t num_data;
+  in.read(reinterpret_cast<char*>(&num_data), sizeof(uint32_t));
+  auto mapping = std::make_shared<
+      std::unordered_map<VectorSetID, std::pair<VectorSetID, Cardinality>>>();
+  VectorSetID offset = 0;
+  for (VectorSetID i = 0; i < num_data; ++i) {
+    Cardinality cardinality;
+    in.read(reinterpret_cast<char*>(&cardinality), sizeof(cardinality));
+    (*mapping)[i] = std::make_pair(offset, cardinality);
+    offset += cardinality;
+  }
+  size_t expected_size = sizeof(uint32_t) + num_data * sizeof(uint32_t);
+  in.seekg(0, std::ios::end);
+  if (in.tellg() != expected_size) {
+    std::cerr << "Error: File size mismatch. Expected " << expected_size
+              << " bytes but got " << in.tellg() << " bytes." << std::endl;
+    throw std::runtime_error("File size validation failed");
+  }
+  in.close();
+  return [mapping](VectorSetID vector_set_id) {
+    return mapping->at(vector_set_id);
+  };
 }
 
 template void MultiVectorReranker::Rerank<unsigned int>(
