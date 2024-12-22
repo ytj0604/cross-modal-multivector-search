@@ -98,7 +98,7 @@ int main(int argc, char **argv) {
   MultiVectorReranker reranker;
   reranker.SetDataVector(data_matrix);
   reranker.SetQueryVector(query_matrix);
-  reranker.SetMultiVectorCardinality(query_multivector_size);
+  reranker.SetQueryMultiVectorCardinality(query_multivector_size);
   reranker.SetK(k);
   reranker.SetDistanceMetric(
       "smooth_chamfer", (dist == "cosine" || dist == "ip") ? "cosine" : "l2");

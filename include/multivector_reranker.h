@@ -2,6 +2,9 @@
 #define MULTI_VECTOR_RERANKER_H
 #define EIGEN_USE_BLAS
 
+#include <cublas_v2.h>
+#include <cuda_runtime.h>
+
 #include <Eigen/Dense>
 #include <chrono>
 #include <cstdint>
@@ -11,6 +14,7 @@
 #include <memory>
 #include <unordered_set>
 #include <vector>
+#include <mutex>
 
 using VectorSetID = unsigned int;
 using VectorID = unsigned int;
@@ -27,12 +31,33 @@ using VSID2VIDMapping =
     std::function<std::pair<VectorID, Cardinality>(VectorSetID)>;
 using GroundTruthMapping =
     std::function<std::pair<VectorSetID, Cardinality>(VectorSetID)>;
+#define CUDA_CHECK(call)                                                     \
+  do {                                                                       \
+    cudaError_t err = call;                                                  \
+    if (err != cudaSuccess) {                                                \
+      fprintf(stderr, "CUDA error in file '%s' in line %i: %s.\n", __FILE__, \
+              __LINE__, cudaGetErrorString(err));                            \
+      exit(EXIT_FAILURE);                                                    \
+    }                                                                        \
+  } while (0)
+
+namespace std {
+template <>
+struct hash<std::pair<float*, unsigned int>> {
+  size_t operator()(const std::pair<float*, unsigned int>& p) const {
+    // Combine the hashes of the individual components
+    return hash<float*>()(p.first) ^ (hash<unsigned int>()(p.second) << 1);
+  }
+};
+}  // namespace std
 
 class MultiVectorReranker {
  public:
+  MultiVectorReranker();
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  void SetVectorID2VectorSetIDMapping(std::function<VectorSetID(VectorID)> f);
-  void SetMultiVectorCardinality(uint32_t cardinality);
+  void SetVectorID2VectorSetIDMapping(VID2VSIDMapping f);
+  void SetVectorSetID2VectorIDMapping(VSID2VIDMapping f);
+  void SetQueryMultiVectorCardinality(uint32_t cardinality);
   void SetDistanceMetric(const std::string& set_to_set_metric,
                          const std::string& vector_dist_metric);
   void SetDataVector(const Matrix& data_matrix);
@@ -45,13 +70,27 @@ class MultiVectorReranker {
   void RerankAllBySequentialScan(VectorSetID& query_id,
                                  std::vector<VectorSetID>& reranked_indices);
   void RerankAllAndGenerateSetGroundTruth(const std::string& ground_truth_file);
+  void SetGPUBatchSize(Cardinality batch_size);
+  void SetUseGPU(bool use_gpu) { this->use_gpu = use_gpu; }
 
  private:
+  void SetQueryOnGPU(const Eigen::Ref<const Matrix>& query);
+  float* SetDataBatchOnGPU(const Eigen::Ref<const Matrix>& data);
+  void AllocateResultBufferIfNeeded(int query_rows, int data_rows);
   void computeCosineSimilarity(const Eigen::Ref<const Matrix>&,
                                const Eigen::Ref<const Matrix>&,
                                Eigen::Ref<Matrix>);
+  void computeCosineSimilarityGPU(const Eigen::Ref<const Matrix>&,
+                                  const Eigen::Ref<const Matrix>&,
+                                  Eigen::Ref<Matrix>);
+  // For following functions, the "img_embs" and "txt_embs" are not correct.
+  // They are actually query and data.
   float computeSmoothChamferDistance(const Eigen::Ref<const Matrix>& img_embs,
                                      const Eigen::Ref<const Matrix>& txt_embs);
+  std::vector<float> ComputeSmoothChamferDistanceBatch(
+      const Eigen::Ref<const Matrix>& img_embs,
+      const Eigen::Ref<const Matrix>& txt_embs,
+      std::vector<Cardinality>& cardinalities);
   float ComputeSummedMaxSimilarity(const Eigen::Ref<const Matrix>& img_embs,
                                    const Eigen::Ref<const Matrix>& txt_embs);
   uint32_t multi_vector_cardinality = 0;
@@ -61,15 +100,48 @@ class MultiVectorReranker {
   Matrix query_matrix;
   std::function<float(const Eigen::Ref<const Matrix>&,
                       const Eigen::Ref<const Matrix>&)>
-      set_to_set_distance_metric;
+      set_to_set_distance_metric = nullptr;
   std::function<void(const Eigen::Ref<const Matrix>&,
                      const Eigen::Ref<const Matrix>&, Eigen::Ref<Matrix>)>
-      vector_distance_metric;
+      vector_distance_metric = nullptr;
+  // This is used only when GPU is used.
+  std::function<std::vector<float>(const Eigen::Ref<const Matrix>&,
+                                   const Eigen::Ref<const Matrix>&,
+                                   std::vector<Cardinality>&)>
+      set_to_set_distance_metric_batch = nullptr;
   // Smooth-Chamfer distance parameters
   float temperature = 16.0f;
   float temperature_txt_scale = 1.0;
   float denominator = 2;
   uint32_t k;
+
+  // GPU related.
+  bool use_gpu = false;
+
+  // cuBLAS handle
+  cublasHandle_t handle;
+  Cardinality gpu_batch_size = 0;
+
+  // Device memory for query matrix
+  float* d_query = nullptr;
+  int query_rows = -1;
+
+  // Device memory for batched data and result matrices
+  //   float* d_data_batch = nullptr;
+  float* d_result_batch = nullptr;
+
+  // Preallocated sizes
+  //   int max_batch_size = -1;
+  int max_result_rows = -1;
+  int max_result_cols = -1;
+
+  // Instead of unloading and loading data to GPU for each query, we can keep
+  // the data in GPU memory.
+  // Eviction is TODO.
+  // Currently assume that data is not too large.
+  std::mutex map_mutex;
+  std::unordered_map<std::pair<float*, Cardinality>, float*> d_data_batch_map;
+  size_t allocated_GPU_memory = 0;
 };
 
 class RecallCalculator {
@@ -80,8 +152,7 @@ class RecallCalculator {
   double ComputeRecall(VectorSetID query_id,
                        const std::vector<VectorSetID>& reranked_indices);
   double ComputePairedRecall(VectorSetID query_id,
-                             const std::vector<VectorSetID>&
-                             reranked_indices);
+                             const std::vector<VectorSetID>& reranked_indices);
 
  private:
   uint32_t k = 0;
@@ -102,8 +173,7 @@ class Loader {
   static VectorGroundTruthVectorPtr LoadVectorGroundTruth(
       const std::string& file_path);
   // Should be used for re-ranking.
-  static std::pair<std::function<VectorSetID(VectorID)>,
-                   std::function<std::pair<VectorID, Cardinality>(VectorSetID)>>
+  static std::pair<VID2VSIDMapping, VSID2VIDMapping>
   LoadVectorCardinalityMappingAndGetBothMappings(std::string& file_path);
   static GroundTruthMapping LoadQueryDataPairMappingAsFunction(
       std::string& file_path);

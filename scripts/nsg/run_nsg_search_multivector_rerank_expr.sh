@@ -1,45 +1,93 @@
 #!/bin/bash
 
+if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 config.yaml"
+    exit 1
+fi
+
+config_file="$1"
+
+if [ ! -f "$config_file" ]; then
+    echo "Error: Configuration file '$config_file' does not exist."
+    exit 1
+fi
+
+if ! command -v yq &> /dev/null; then
+    echo "Error: yq is not installed."
+    exit 1
+fi
+
+index_name="nsg"
+index_suffix="nsg"
+index_prefix="_nsg"
 build_dir="$(dirname "$(realpath "$0")")/../../build/"
+timestamp=$(date +%Y%m%d%H%M)
 
-dist=ip
-base_path=/mnt/dive/
-k=10
+get_yaml_value() {
+    yq e "$1" "$config_file"
+}
 
-for i in {1..5}; do
-  for datatype in "img" "txt"; do
-    total_beam_widths=(20 40 80 120 160 200 400 600 800 1000)
-    for bw in "${total_beam_widths[@]}"; do
-      path=${base_path}${i}/
-      result_dir=${path}/result_nsg/
-      if [ ! -d ${result_dir} ]; then
-        mkdir ${result_dir}
-      fi
-      if [ $datatype == "img" ]; then
-        query_type="txt"
-        res_filename_prefix="t2i"
-      else
-        query_type="img"
-        res_filename_prefix="i2t"
-      fi
-      index_path=${path}/${datatype}_nsg.index
-      data_path=${path}/coco_test_${i}_${datatype}_embs.fbin
-      query_path=${path}/coco_test_${i}_${query_type}_embs.fbin
-      gt_path=/mnt/dive/ground_truth/coco_test_${i}_${query_type}_gts.ibin
-      result_agg_path=${result_dir}/aggregated_results.txt
+experiment_name=$(get_yaml_value '.experiment_name')
+base_path=$(get_yaml_value '.base_path')
+ground_truth_path=$(get_yaml_value '.ground_truth_path')
+k=$(get_yaml_value '.k')
+distance_metric=$(get_yaml_value '.distance_metric')
+aggregated_result_filename=$(get_yaml_value '.aggregated_result_filename')
+multivector_sizes=($(yq e '.multivector_sizes[]' "$config_file"))
+total_beam_widths=($(yq e '.total_beam_widths[]' "$config_file"))
+data_types_length=$(yq e '.data_types | length' "$config_file")
 
-      ${build_dir}/tests/search_rerank_nsg \
-        --base_data_path ${data_path} \
-        --query_path ${query_path} \
-        --index_path ${index_path} \
-        --set_gt_path ${gt_path} \
-        --evaluation_save_path ${result_agg_path} \
-        --k ${k} \
-        --dist ${dist} \
-        --query_multivector_size $i \
-        --evaluation_save_prefix ${result_dir}/${res_filename_prefix}_nsg_${M}_${bw} \
-        --total_beam_width ${bw}
-      echo "Completed search for ${res_filename_prefix} with beam width ${bw}"
+echo "Starting Experiment: $experiment_name"
+echo "Index: $index_name"
+echo "Base Path: $base_path"
+echo "Ground Truth Path: $ground_truth_path"
+echo "k: $k"
+echo "Distance Metric: $distance_metric"
+echo "Build Directory: $build_dir"
+echo "Aggregated Result Filename: $aggregated_result_filename"
+echo "Multivector Sizes: ${multivector_sizes[*]}"
+echo "Beam Widths: ${total_beam_widths[*]}"
+echo "Timestamp: $timestamp"
+echo "----------------------------------------------"
+
+for mvs in "${multivector_sizes[@]}"; do
+    echo "Processing Multivector Size: $mvs"
+    for (( dt_idx=0; dt_idx<data_types_length; dt_idx++ )); do
+        datatype_name=$(get_yaml_value ".data_types[$dt_idx].name")
+        data_suffix=$(get_yaml_value ".data_types[$dt_idx].data_suffix")
+        query_suffix=$(get_yaml_value ".data_types[$dt_idx].query_suffix")
+        gt_suffix=$(get_yaml_value ".data_types[$dt_idx].gt_suffix")
+        result_prefix=$(get_yaml_value ".data_types[$dt_idx].result_prefix")
+
+        echo "  Data Type: $datatype_name"
+
+        iteration_path="${base_path}${mvs}/"
+        result_dir="${iteration_path}/result_${index_suffix}_${timestamp}/"
+        mkdir -p "${result_dir}"
+
+        index_path="${iteration_path}${datatype_name}${index_prefix}.index"
+        data_path="${iteration_path}coco_test_${mvs}${data_suffix}"
+        query_path="${iteration_path}coco_test_${mvs}${query_suffix}"
+        gt_path="${ground_truth_path}/coco_test_${mvs}${gt_suffix}"
+        result_agg_path="${result_dir}/${aggregated_result_filename}"
+
+        for bw in "${total_beam_widths[@]}"; do
+            evaluation_save_prefix="${result_dir}/${result_prefix}_${index_suffix}_${bw}"
+            "${build_dir}/tests/search_rerank_${index_suffix}" \
+                --base_data_path "${data_path}" \
+                --query_path "${query_path}" \
+                --index_path "${index_path}" \
+                --set_gt_path "${gt_path}" \
+                --evaluation_save_path "${result_agg_path}" \
+                --k "${k}" \
+                --dist "${distance_metric}" \
+                --query_multivector_size "${mvs}" \
+                --evaluation_save_prefix "${evaluation_save_prefix}" \
+                --total_beam_width "${bw}"
+
+            echo "    Completed: mvs=${mvs}, datatype=${datatype_name}, beam_width=${bw}"
+        done
     done
-  done
 done
+
+echo "Experiment '${experiment_name}' completed successfully."

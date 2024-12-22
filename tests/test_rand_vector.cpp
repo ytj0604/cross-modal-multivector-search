@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
   auto query_ = Loader::LoadEmbeddingVector(query);
   auto base_ = Loader::LoadEmbeddingVector(data);
   // MultiVectorReranker reranker;
-  // reranker.SetMultiVectorCardinality(4);
+  // reranker.SetQueryMultiVectorCardinality(4);
   // reranker.SetQueryVector(query);
   // reranker.SetDataVector(base);
   // reranker.SetDistanceMetric("smooth_chamfer", "cosine");

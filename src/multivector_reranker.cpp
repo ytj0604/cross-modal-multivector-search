@@ -2,12 +2,17 @@
 
 #include <unordered_map>
 
-void MultiVectorReranker::SetVectorID2VectorSetIDMapping(
-    std::function<VectorSetID(VectorID)> f) {
+MultiVectorReranker::MultiVectorReranker() { cublasCreate(&handle); }
+
+void MultiVectorReranker::SetVectorID2VectorSetIDMapping(VID2VSIDMapping f) {
   vector_id_to_vector_set_id = f;
 }
 
-void MultiVectorReranker::SetMultiVectorCardinality(uint32_t cardinality) {
+void MultiVectorReranker::SetVectorSetID2VectorIDMapping(VSID2VIDMapping f) {
+  vector_set_id_to_vector_id = f;
+}
+
+void MultiVectorReranker::SetQueryMultiVectorCardinality(uint32_t cardinality) {
   this->multi_vector_cardinality = cardinality;
 }
 
@@ -17,6 +22,10 @@ void MultiVectorReranker::SetDataVector(const Matrix& data_matrix) {
 
 void MultiVectorReranker::SetQueryVector(const Matrix& query_matrix) {
   this->query_matrix = query_matrix;
+}
+
+void MultiVectorReranker::SetGPUBatchSize(Cardinality batch_size) {
+  gpu_batch_size = batch_size;
 }
 
 template <typename IDType>
@@ -91,17 +100,41 @@ void MultiVectorReranker::RerankAllBySequentialScan(
   std::vector<std::pair<float, VectorSetID>> relevance_scores;
   relevance_scores.reserve(data_matrix.rows() / multi_vector_cardinality);
 
-  for (VectorSetID data_set_id = 0;
-       data_set_id < data_matrix.rows() / multi_vector_cardinality;
-       ++data_set_id) {
-    Eigen::Map<const Matrix> data_set(
-        data_matrix.data() +
-            data_set_id * multi_vector_cardinality * data_matrix.cols(),
-        multi_vector_cardinality, data_matrix.cols());
-    float relevance = set_to_set_distance_metric(query_set, data_set);
-    relevance_scores.emplace_back(relevance, data_set_id);
+  if (use_gpu) {
+    SetQueryOnGPU(query_set);
+    for (VectorSetID data_set_id = 0;
+         data_set_id < data_matrix.rows() / multi_vector_cardinality;
+         data_set_id += gpu_batch_size) {
+      Cardinality batch_size = std::min(
+          gpu_batch_size, static_cast<Cardinality>(data_matrix.rows()) /
+                                  multi_vector_cardinality -
+                              data_set_id);
+      Eigen::Map<const Matrix> data_batch(
+          data_matrix.data() +
+              data_set_id * multi_vector_cardinality * data_matrix.cols(),
+          batch_size * multi_vector_cardinality, data_matrix.cols());
+      // Following should be changed if data multivector cardinality is not
+      // fixed.
+      std::vector<Cardinality> cardinalities(batch_size,
+                                             multi_vector_cardinality);
+      auto relevance_batch = set_to_set_distance_metric_batch(
+          query_set, data_batch, cardinalities);
+      for (size_t i = 0; i < batch_size; ++i) {
+        relevance_scores.emplace_back(relevance_batch[i], data_set_id + i);
+      }
+    }
+  } else {
+    for (VectorSetID data_set_id = 0;
+         data_set_id < data_matrix.rows() / multi_vector_cardinality;
+         ++data_set_id) {
+      Eigen::Map<const Matrix> data_set(
+          data_matrix.data() +
+              data_set_id * multi_vector_cardinality * data_matrix.cols(),
+          multi_vector_cardinality, data_matrix.cols());
+      float relevance = set_to_set_distance_metric(query_set, data_set);
+      relevance_scores.emplace_back(relevance, data_set_id);
+    }
   }
-
   size_t top_k =
       std::min(this->k, static_cast<uint32_t>(relevance_scores.size()));
 
@@ -140,10 +173,74 @@ void MultiVectorReranker::RerankAllAndGenerateSetGroundTruth(
   out.close();
 }
 
+void MultiVectorReranker::SetQueryOnGPU(const Eigen::Ref<const Matrix>& query) {
+  if (query.rows() != query_rows) {
+    if (d_query) cudaFree(d_query);
+    query_rows = query.rows();
+    cudaMalloc((void**)&d_query, query_rows * query.cols() * sizeof(float));
+  }
+  cudaMemcpy(d_query, query.data(), query_rows * query.cols() * sizeof(float),
+             cudaMemcpyHostToDevice);
+}
+
+float* MultiVectorReranker::SetDataBatchOnGPU(
+    const Eigen::Ref<const Matrix>& data) {
+  std::pair<float*, Cardinality> key = std::make_pair(
+      const_cast<float*>(data.data()), static_cast<Cardinality>(data.rows()));
+  if (d_data_batch_map.find(key) == d_data_batch_map.end()) {
+    float* d_data_batch = nullptr;
+    cudaMalloc((void**)&d_data_batch,
+               data.rows() * data.cols() * sizeof(float));
+    cudaMemcpy(d_data_batch, data.data(),
+               data.rows() * data.cols() * sizeof(float),
+               cudaMemcpyHostToDevice);
+    d_data_batch_map[key] = d_data_batch;
+    allocated_GPU_memory += data.rows() * data.cols() * sizeof(float);
+  }
+  return d_data_batch_map[key];
+}
+
+void MultiVectorReranker::AllocateResultBufferIfNeeded(int query_rows,
+                                                       int data_rows) {
+  if (query_rows > max_result_rows || data_rows > max_result_cols) {
+    // Free existing memory if it exists
+    if (d_result_batch) cudaFree(d_result_batch);
+
+    // Update maximum dimensions
+    max_result_rows = query_rows;
+    max_result_cols = data_rows;
+
+    // Allocate new GPU memory for the result matrix
+    cudaMalloc((void**)&d_result_batch,
+               max_result_rows * max_result_cols * sizeof(float));
+  }
+}
+
 void MultiVectorReranker::computeCosineSimilarity(
     const Eigen::Ref<const Matrix>& X, const Eigen::Ref<const Matrix>& Y,
     Eigen::Ref<Matrix> result) {
   result = X * Y.transpose();
+}
+
+void MultiVectorReranker::computeCosineSimilarityGPU(
+    const Eigen::Ref<const Matrix>& X, const Eigen::Ref<const Matrix>& Y,
+    Eigen::Ref<Matrix> result) {
+  // The query should be already set!
+  // The caller should explicitly invoke SetQueryOnGPU() before calling this
+  // function. It is to avoid unnecessary memory transfers.
+  // SetQueryOnGPU(X);
+  auto data_mem = SetDataBatchOnGPU(Y);
+  AllocateResultBufferIfNeeded(X.rows(), Y.rows());
+  // Scalars for cuBLAS
+  const float alpha = 1.0f;
+  const float beta = 0.0f;
+
+  cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N, Y.cols(), X.rows(), X.cols(),
+              &alpha, data_mem, Y.cols(), d_query, X.cols(), &beta,
+              d_result_batch, Y.cols());
+
+  cudaMemcpy(result.data(), d_result_batch, X.rows() * Y.rows() * sizeof(float),
+             cudaMemcpyDeviceToHost);
 }
 
 float MultiVectorReranker::computeSmoothChamferDistance(
@@ -193,6 +290,63 @@ float MultiVectorReranker::computeSmoothChamferDistance(
   return (term1 + term2) / denominator;
 }
 
+std::vector<float> MultiVectorReranker::ComputeSmoothChamferDistanceBatch(
+    const Eigen::Ref<const Matrix>& img_embs,
+    const Eigen::Ref<const Matrix>& txt_embs,
+    std::vector<Cardinality>& cardinalities) {
+  auto ret = std::vector<float>(cardinalities.size());
+  Matrix dists(img_embs.rows(), txt_embs.rows());
+  vector_distance_metric(img_embs, txt_embs, dists);
+  // Now split the result and do per data computation
+  auto offset = 0;
+  for (auto data_id = 0; data_id < cardinalities.size(); ++data_id) {
+    // Note that, this involves non-contiguous memory access.
+    // For now I think it is fine, but if it becomes a bottleneck, we can
+    // consider optimizing it.
+    auto dist = dists.block(0, offset, img_embs.rows(), cardinalities[data_id]);
+    Matrix temp_dist1 = (temperature * temperature_txt_scale * dist);
+    Matrix temp_dist2 = (temperature * dist);
+
+    // Compute row-wise max for temp_dist1
+    Eigen::VectorXf row_max = temp_dist1.rowwise().maxCoeff();  // Size: (n_img)
+
+    // Subtract row_max and exponentiate for temp_dist1
+    Matrix exp1 =
+        (temp_dist1.colwise() - row_max).array().exp();  // Size: (n_img, n_txt)
+
+    // Compute row-wise sum and log for temp_dist1
+    Eigen::VectorXf row_sum = exp1.rowwise().sum();  // Size: (n_img)
+    Eigen::VectorXf row_log =
+        row_sum.array().log() + row_max.array();  // Size: (n_img)
+
+    // Compute term1
+    float term1 = row_log.sum() / (multi_vector_cardinality * temperature *
+                                   temperature_txt_scale);
+
+    // Compute column-wise max for temp_dist2
+    Eigen::VectorXf col_max = temp_dist2.colwise().maxCoeff();  // Size: (n_txt)
+
+    // Subtract col_max and exponentiate for temp_dist2
+    Matrix exp2 = (temp_dist2.rowwise() - col_max.transpose())
+                      .array()
+                      .exp();  // Size: (n_img, n_txt)
+
+    // Compute column-wise sum and log for temp_dist2
+    Eigen::VectorXf col_sum = exp2.colwise().sum();  // Size: (n_txt)
+    Eigen::VectorXf col_log =
+        col_sum.array().log() + col_max.array();  // Size: (n_txt)
+
+    // Compute term2
+    float term2 = col_log.sum() / (multi_vector_cardinality * temperature);
+
+    // Smooth Chamfer Distance
+    ret[data_id] = (term1 + term2) / denominator;
+
+    offset += cardinalities[data_id];
+  }
+  return ret;
+}
+
 float MultiVectorReranker::ComputeSummedMaxSimilarity(
     const Eigen::Ref<const Matrix>& img_embs,
     const Eigen::Ref<const Matrix>& txt_embs) {
@@ -209,11 +363,18 @@ void MultiVectorReranker::SetDistanceMetric(
       std::string,
       std::function<void(const Eigen::Ref<const Matrix>&,
                          const Eigen::Ref<const Matrix>&, Eigen::Ref<Matrix>)>>
-      vector_metric_map = {{"cosine", [this](const Eigen::Ref<const Matrix>& X,
-                                             const Eigen::Ref<const Matrix>& Y,
-                                             Eigen::Ref<Matrix> result) {
-                              this->computeCosineSimilarity(X, Y, result);
-                            }}};
+      vector_metric_map = {
+          {"cosine",
+           [this](const Eigen::Ref<const Matrix>& X,
+                  const Eigen::Ref<const Matrix>& Y,
+                  Eigen::Ref<Matrix> result) {
+             this->computeCosineSimilarity(X, Y, result);
+           }},
+          {"cosine_gpu", [this](const Eigen::Ref<const Matrix>& X,
+                                const Eigen::Ref<const Matrix>& Y,
+                                Eigen::Ref<Matrix> result) {
+             this->computeCosineSimilarityGPU(X, Y, result);
+           }}};
 
   // Map for set-to-set distance metrics
   static const std::unordered_map<
@@ -229,16 +390,34 @@ void MultiVectorReranker::SetDistanceMetric(
                                            const Eigen::Ref<const Matrix>& Y) {
              return this->ComputeSummedMaxSimilarity(X, Y);
            }}};
+  static const std::unordered_map<
+      std::string,
+      std::function<std::vector<float>(const Eigen::Ref<const Matrix>&,
+                                       const Eigen::Ref<const Matrix>&,
+                                       std::vector<Cardinality>&)>>
+      set_to_set_batch_map = {
+          {"smooth_chamfer", [this](const Eigen::Ref<const Matrix>& X,
+                                    const Eigen::Ref<const Matrix>& Y,
+                                    std::vector<Cardinality>& cardinalities) {
+             return this->ComputeSmoothChamferDistanceBatch(X, Y,
+                                                            cardinalities);
+           }}};
 
   // Resolve vector distance metric
   auto vector_metric_it = vector_metric_map.find(vector_dist_metric);
   auto set_to_set_metric_it = set_to_set_metric_map.find(set_to_set_metric);
+  auto set_to_set_metric_batch_it =
+      set_to_set_batch_map.find(set_to_set_metric);
   if (vector_metric_it == vector_metric_map.end() ||
       set_to_set_metric_it == set_to_set_metric_map.end()) {
     throw std::invalid_argument("Unsupported metric");
   }
   vector_distance_metric = vector_metric_it->second;
   set_to_set_distance_metric = set_to_set_metric_it->second;
+  // set_to_set_metric_batch can be nullptr if not implemented yet.
+  if (set_to_set_metric_batch_it != set_to_set_batch_map.end()) {
+    set_to_set_distance_metric_batch = set_to_set_metric_batch_it->second;
+  }
 }
 
 Matrix Loader::LoadEmbeddingVector(const std::string& file_path) {

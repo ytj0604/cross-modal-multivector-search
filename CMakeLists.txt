@@ -27,6 +27,13 @@ else()
 endif()
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free")
 
+find_package(CUDA REQUIRED)
+link_directories(/usr/local/cuda/lib64)
+include_directories(${CUDA_INCLUDE_DIRS})
+link_directories(${CUDA_LIBRARIES_DIRS})
+message(STATUS "CUDA Include Directories: ${CUDA_INCLUDE_DIRS}")
+message(STATUS "CUDA Library Directories: ${CUDA_LIBRARIES_DIRS}")
+
 # set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -DDEBUG -Wall -Wextra -march=native -mtune=native -fsanitize=address -lasan -fsanitize=leak")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -DDEBUG -Wall -Wextra -march=native -mtune=native -lblas")
 # set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Ofast -DNDEBUG -march=native -mtune=native -ftree-vectorize -Wall -DINFO -lblas")
