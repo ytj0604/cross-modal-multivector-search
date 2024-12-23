@@ -1,6 +1,13 @@
 #include <multivector_reranker.h>
 
 #include <unordered_map>
+// static
+thread_local float* MultiVectorReranker::d_query = nullptr;
+thread_local int MultiVectorReranker::query_rows = -1;
+
+thread_local float* MultiVectorReranker::d_result_batch = nullptr;
+thread_local int MultiVectorReranker::max_result_rows = -1;
+thread_local int MultiVectorReranker::max_result_cols = -1;
 
 MultiVectorReranker::MultiVectorReranker() { cublasCreate(&handle); }
 
@@ -187,6 +194,7 @@ float* MultiVectorReranker::SetDataBatchOnGPU(
     const Eigen::Ref<const Matrix>& data) {
   std::pair<float*, Cardinality> key = std::make_pair(
       const_cast<float*>(data.data()), static_cast<Cardinality>(data.rows()));
+  std::lock_guard<std::mutex> lock(map_mutex);
   if (d_data_batch_map.find(key) == d_data_batch_map.end()) {
     float* d_data_batch = nullptr;
     cudaMalloc((void**)&d_data_batch,
@@ -228,17 +236,18 @@ void MultiVectorReranker::computeCosineSimilarityGPU(
   // The query should be already set!
   // The caller should explicitly invoke SetQueryOnGPU() before calling this
   // function. It is to avoid unnecessary memory transfers.
-  // SetQueryOnGPU(X);
   auto data_mem = SetDataBatchOnGPU(Y);
   AllocateResultBufferIfNeeded(X.rows(), Y.rows());
   // Scalars for cuBLAS
   const float alpha = 1.0f;
   const float beta = 0.0f;
 
-  cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N, Y.cols(), X.rows(), X.cols(),
-              &alpha, data_mem, Y.cols(), d_query, X.cols(), &beta,
-              d_result_batch, Y.cols());
-
+  auto ret = cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N, Y.rows(), X.rows(),
+                         X.cols(), &alpha, data_mem, Y.cols(), d_query,
+                         X.cols(), &beta, d_result_batch, Y.rows());
+  if (ret != CUBLAS_STATUS_SUCCESS) {
+    abort();
+  }
   cudaMemcpy(result.data(), d_result_batch, X.rows() * Y.rows() * sizeof(float),
              cudaMemcpyDeviceToHost);
 }
@@ -297,13 +306,11 @@ std::vector<float> MultiVectorReranker::ComputeSmoothChamferDistanceBatch(
   auto ret = std::vector<float>(cardinalities.size());
   Matrix dists(img_embs.rows(), txt_embs.rows());
   vector_distance_metric(img_embs, txt_embs, dists);
-  // Now split the result and do per data computation
+
   auto offset = 0;
   for (auto data_id = 0; data_id < cardinalities.size(); ++data_id) {
-    // Note that, this involves non-contiguous memory access.
-    // For now I think it is fine, but if it becomes a bottleneck, we can
-    // consider optimizing it.
     auto dist = dists.block(0, offset, img_embs.rows(), cardinalities[data_id]);
+
     Matrix temp_dist1 = (temperature * temperature_txt_scale * dist);
     Matrix temp_dist2 = (temperature * dist);
 

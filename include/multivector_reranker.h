@@ -118,22 +118,22 @@ class MultiVectorReranker {
   // GPU related.
   bool use_gpu = false;
 
-  // cuBLAS handle
+  // cuBLAS handle; thread safe.
   cublasHandle_t handle;
   Cardinality gpu_batch_size = 0;
 
   // Device memory for query matrix
-  float* d_query = nullptr;
-  int query_rows = -1;
+  thread_local static float* d_query;
+  thread_local static int query_rows;
 
   // Device memory for batched data and result matrices
   //   float* d_data_batch = nullptr;
-  float* d_result_batch = nullptr;
+  thread_local static float* d_result_batch;
 
   // Preallocated sizes
   //   int max_batch_size = -1;
-  int max_result_rows = -1;
-  int max_result_cols = -1;
+  thread_local static int max_result_rows;
+  thread_local static int max_result_cols;
 
   // Instead of unloading and loading data to GPU for each query, we can keep
   // the data in GPU memory.
