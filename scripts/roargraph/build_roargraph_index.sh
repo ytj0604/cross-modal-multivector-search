@@ -1,106 +1,57 @@
 #!/bin/bash
 
-roargraph_dir=/mnt/RoarGraph/build/
+if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 config.yaml"
+    exit 1
+fi
 
-# Set the prefix for the dataset path
-prefix=/mnt/rand_vec/4
+config_file="$1"
 
-# Define the value
+if [ ! -f "$config_file" ]; then
+    echo "Error: Configuration file '$config_file' does not exist."
+    exit 1
+fi
+
+if ! command -v yq &> /dev/null; then
+    echo "Error: yq is not installed."
+    exit 1
+fi
+
+# Load configuration values from the YAML file
+build_dir="$(dirname "$(realpath "$0")")/../../build/"
+base_path=$(yq e '.base_path' "$config_file")
+dist=$(yq e '.distance_metric' "$config_file")
+data_types_length=$(yq e '.data_types | length' "$config_file")
+
+# RoarGraph-specific params
 M_SQ=100
 M_PJBP=35
 L_PJPQ=100
 
-# File paths for text and image datasets
-# text_data=${prefix}/coco_test_4_txt_embs.fbin
-# image_data=${prefix}/coco_test_4_img_embs.fbin
+# Iterate through the multivector sizes and data types
+multivector_sizes=($(yq e '.multivector_sizes[]' "$config_file"))
+for mvs in "${multivector_sizes[@]}"; do
+  for (( dt_idx=0; dt_idx<data_types_length; dt_idx++ )); do
+    datatype_name=$(yq e ".data_types[$dt_idx].name" "$config_file")
+    data_file=$(yq e ".data_types[$dt_idx].data_file" "$config_file")
 
-# Generate RoarGraph datasets for all 4 combinations
-echo "Generating RoarGraph datasets with M_PJBP=${M_PJBP}..."
+    build_query_file=$(yq e ".data_types[$dt_idx].nonquery_file" "$config_file")
+    build_query_groundtruth_file=$(yq e ".data_types[$dt_idx].nonquery_vector_gt_file" "$config_file")
 
-# Image to Image (i2i)
-${roargraph_dir}/tests/test_build_roargraph --data_type float --dist cosine \
-  --base_data_path /mnt/rand_vec/4/vec_2.fbin \
-  --sampled_query_data_path /mnt/rand_vec/4/vec_1.fbin \
-  --projection_index_save_path /mnt/rand_vec/4/1to2.index \
-  --learn_base_nn_path /mnt/rand_vec/4/1to2.gt.bin \
-  --M_sq ${M_SQ} --M_pjbp ${M_PJBP} --L_pjpq ${L_PJPQ} -T 64
+    path="${base_path}${mvs}/"
+    index_save_path="${path}/index/${datatype_name}_roargraph.index"
 
-# # Text to Text (t2t)
-# ${roargraph_dir}/tests/test_build_roargraph --data_type float --dist cosine \
-#   --base_data_path ${text_data} \
-#   --sampled_query_data_path ${text_data} \
-#   --projection_index_save_path ${prefix}/t2t_Roar_${M_PJBP}.index \
-#   --learn_base_nn_path ${prefix}/t2t.gt.bin \
-#   --M_sq ${M_SQ} --M_pjbp ${M_PJBP} --L_pjpq ${L_PJPQ} -T 64
+    mkdir -p ${path}/index
 
-# Text to Image (t2i)
-# ${roargraph_dir}/tests/test_build_roargraph --data_type float --dist cosine \
-#   --base_data_path ${image_data} \
-#   --sampled_query_data_path ${text_data} \
-#   --projection_index_save_path ${prefix}/t2i_Roar_${M_PJBP}.index \
-#   --learn_base_nn_path ${prefix}/t2i.gt.bin \
-#   --M_sq ${M_SQ} --M_pjbp ${M_PJBP} --L_pjpq ${L_PJPQ} -T 64
+    ${build_dir}/tests/test_build_roargraph \
+      --data_type float \
+      --dist ${dist} \
+      --base_data_path ${path}/${data_file} \
+      --sampled_query_data_path ${path}/${build_query_file} \
+      --projection_index_save_path ${index_save_path} \
+      --learn_base_nn_path ${path}${build_query_groundtruth_file} \
+      --M_sq ${M_SQ} --M_pjbp ${M_PJBP} --L_pjpq ${L_PJPQ} -T 64
 
-# # Image to Text (i2t)
-# ${roargraph_dir}/tests/test_build_roargraph --data_type float --dist cosine \
-#   --base_data_path ${text_data} \
-#   --sampled_query_data_path ${image_data} \
-#   --projection_index_save_path ${prefix}/i2t_Roar_${M_PJBP}.index \
-#   --learn_base_nn_path ${prefix}/i2t.gt.bin \
-#   --M_sq ${M_SQ} --M_pjbp ${M_PJBP} --L_pjpq ${L_PJPQ} -T 64
-
-echo "RoarGraph generation completed!"
-
-# for i in {1..5}; do 
-# roargraph_dir=/mnt/RoarGraph/build/
-
-# # Set the prefix for the dataset path
-# prefix=/mnt/dive/${i}/
-
-# # Define the value
-# M_SQ=100
-# M_PJBP=35
-# L_PJPQ=100
-
-# # File paths for text and image datasets
-# text_data=${prefix}/coco_test_${i}_txt_embs.fbin
-# image_data=${prefix}/coco_test_${i}_img_embs.fbin
-
-# # Generate RoarGraph datasets for all 4 combinations
-# echo "Generating RoarGraph datasets with M_PJBP=${M_PJBP}..."
-
-# # Image to Image (i2i)
-# ${roargraph_dir}/tests/test_build_roargraph --data_type float --dist cosine \
-#   --base_data_path ${image_data} \
-#   --sampled_query_data_path ${image_data} \
-#   --projection_index_save_path ${prefix}/i2i_Roar_${M_PJBP}.index \
-#   --learn_base_nn_path ${prefix}/i2i.gt.bin \
-#   --M_sq ${M_SQ} --M_pjbp ${M_PJBP} --L_pjpq ${L_PJPQ} -T 64
-
-# # Text to Text (t2t)
-# ${roargraph_dir}/tests/test_build_roargraph --data_type float --dist cosine \
-#   --base_data_path ${text_data} \
-#   --sampled_query_data_path ${text_data} \
-#   --projection_index_save_path ${prefix}/t2t_Roar_${M_PJBP}.index \
-#   --learn_base_nn_path ${prefix}/t2t.gt.bin \
-#   --M_sq ${M_SQ} --M_pjbp ${M_PJBP} --L_pjpq ${L_PJPQ} -T 64
-
-# # Text to Image (t2i)
-# ${roargraph_dir}/tests/test_build_roargraph --data_type float --dist cosine \
-#   --base_data_path ${image_data} \
-#   --sampled_query_data_path ${text_data} \
-#   --projection_index_save_path ${prefix}/t2i_Roar_${M_PJBP}.index \
-#   --learn_base_nn_path ${prefix}/t2i.gt.bin \
-#   --M_sq ${M_SQ} --M_pjbp ${M_PJBP} --L_pjpq ${L_PJPQ} -T 64
-
-# # Image to Text (i2t)
-# ${roargraph_dir}/tests/test_build_roargraph --data_type float --dist cosine \
-#   --base_data_path ${text_data} \
-#   --sampled_query_data_path ${image_data} \
-#   --projection_index_save_path ${prefix}/i2t_Roar_${M_PJBP}.index \
-#   --learn_base_nn_path ${prefix}/i2t.gt.bin \
-#   --M_sq ${M_SQ} --M_pjbp ${M_PJBP} --L_pjpq ${L_PJPQ} -T 64
-
-# echo "RoarGraph generation completed!"
-
-# done
+    echo "Completed building RoarGraph index for ${datatype_name}, multivector size ${mvs}"
+  done
+done

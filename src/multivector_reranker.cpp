@@ -180,6 +180,81 @@ void MultiVectorReranker::RerankAllAndGenerateSetGroundTruth(
   out.close();
 }
 
+void MultiVectorReranker::RankAllVectorsBySequentialScan(
+    VectorID& query_vec_id, Cardinality query_batch_size,
+    std::vector<std::vector<VectorID>>& top_k_indices) {
+  Eigen::Map<const Matrix> query_vec(
+      query_matrix.data() + query_vec_id * query_matrix.cols(),
+      query_batch_size, query_matrix.cols());
+
+  std::vector<std::vector<std::pair<float, VectorID>>> similarity_scores(
+      query_batch_size);
+  for (VectorID query_set_id = 0; query_set_id < query_batch_size;
+       ++query_set_id) {
+    similarity_scores[query_set_id].reserve(data_matrix.rows());
+  }
+
+  if (use_gpu) {
+    SetQueryOnGPU(query_vec);
+  }
+
+  for (VectorID data_set_id = 0; data_set_id < data_matrix.rows();
+       data_set_id += gpu_batch_size) {
+    Cardinality batch_size =
+        std::min(gpu_batch_size,
+                 static_cast<Cardinality>(data_matrix.rows()) - data_set_id);
+    Eigen::Map<const Matrix> data_batch(
+        data_matrix.data() + data_set_id * data_matrix.cols(), batch_size,
+        data_matrix.cols());
+    Matrix dist(query_vec.rows(), data_batch.rows());
+    vector_distance_metric(query_vec, data_batch, dist);
+    for (Cardinality i = 0; i < query_batch_size; ++i) {
+      for (Cardinality j = 0; j < batch_size; ++j) {
+        similarity_scores[i].emplace_back(dist(i, j), data_set_id + j);
+      }
+    }
+  }
+  for (Cardinality i = 0; i < query_batch_size; ++i) {
+    std::partial_sort(
+        similarity_scores[i].begin(), similarity_scores[i].begin() + k,
+        similarity_scores[i].end(), [](const auto& a, const auto& b) {
+          return a.first > b.first;  // Higher relevance first
+        });
+    VectorID ind = query_vec_id + i;
+    top_k_indices[ind].clear();
+    top_k_indices[ind].reserve(k);
+    for (size_t j = 0; j < k; ++j) {
+      top_k_indices[ind].push_back(similarity_scores[i][j].second);
+    }
+  }
+}
+
+// void MultiVectorReranker::GenerateVectorGroundTruth(
+//     const std::string& ground_truth_file) {
+//   if (k == 0) {
+//     throw std::runtime_error("k not set.");
+//   }
+//   std::ofstream out(ground_truth_file, std::ios::binary);
+//   if (!out.is_open()) {
+//     throw std::runtime_error("Cannot open file: " + ground_truth_file);
+//   }
+//   uint32_t num_queries = query_matrix.rows();
+//   uint32_t num_gt_per_query = k;
+//   out.write(reinterpret_cast<const char*>(&num_queries), sizeof(uint32_t));
+//   out.write(reinterpret_cast<const char*>(&num_gt_per_query),
+//   sizeof(uint32_t)); for (VectorID i = 0; i < num_queries; ++i) {
+//     if (i % 1000 == 0) {
+//       std::cout << "Generating ground truth for query " << i << std::endl;
+//     }
+//     std::vector<VectorID> top_k_indices(k);
+//     RankAllVectorsBySequentialScan(i, top_k_indices);
+//     out.write(reinterpret_cast<const char*>(top_k_indices.data()),
+//               k * sizeof(VectorID));
+//   }
+
+//   out.close();
+// }
+
 void MultiVectorReranker::SetQueryOnGPU(const Eigen::Ref<const Matrix>& query) {
   if (query.rows() != query_rows) {
     if (d_query) cudaFree(d_query);

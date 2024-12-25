@@ -12,9 +12,9 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <unordered_set>
 #include <vector>
-#include <mutex>
 
 using VectorSetID = unsigned int;
 using VectorID = unsigned int;
@@ -31,6 +31,7 @@ using VSID2VIDMapping =
     std::function<std::pair<VectorID, Cardinality>(VectorSetID)>;
 using GroundTruthMapping =
     std::function<std::pair<VectorSetID, Cardinality>(VectorSetID)>;
+
 #define CUDA_CHECK(call)                                                     \
   do {                                                                       \
     cudaError_t err = call;                                                  \
@@ -69,7 +70,11 @@ class MultiVectorReranker {
               std::vector<VectorSetID>& reranked_indices);
   void RerankAllBySequentialScan(VectorSetID& query_id,
                                  std::vector<VectorSetID>& reranked_indices);
+  void RankAllVectorsBySequentialScan(
+      VectorID& query_vec_id, Cardinality query_batch_size,
+      std::vector<std::vector<VectorID>>& top_k_indices);
   void RerankAllAndGenerateSetGroundTruth(const std::string& ground_truth_file);
+  void GenerateVectorGroundTruth(const std::string& ground_truth_file);
   void SetGPUBatchSize(Cardinality batch_size);
   void SetUseGPU(bool use_gpu) { this->use_gpu = use_gpu; }
 
@@ -113,14 +118,14 @@ class MultiVectorReranker {
   float temperature = 16.0f;
   float temperature_txt_scale = 1.0;
   float denominator = 2;
-  uint32_t k;
+  uint32_t k = 0;
 
   // GPU related.
   bool use_gpu = false;
 
   // cuBLAS handle; thread safe.
   cublasHandle_t handle;
-  Cardinality gpu_batch_size = 0;
+  Cardinality gpu_batch_size = 10000;
 
   // Device memory for query matrix
   thread_local static float* d_query;
@@ -147,6 +152,7 @@ class MultiVectorReranker {
 class RecallCalculator {
  public:
   void SetK(uint32_t k) { this->k = k; }
+  // Set level gt.
   void SetGroundTruth(SetGroundTruthVectorPtr ground_truth);
   void SetPairedGroundTruth(GroundTruthMapping f) { paired_ground_truth = f; }
   double ComputeRecall(VectorSetID query_id,

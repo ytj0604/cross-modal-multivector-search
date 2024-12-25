@@ -1,0 +1,25 @@
+# config.yaml
+
+experiment_name: dive_train
+base_path: /mnt/datasets/dive_coco_train/
+k: 10
+distance_metric: ip
+data_types:
+  - name: "img"
+    data_file: "img.fbin"
+    query_file: "txt_query.fbin"
+    nonquery_file: "txt_nonquery.fbin" #for roargraph build
+    set_gt_file: "t2i_set_gt.ibin"
+    nonquery_vector_gt_file: "t2i_nonquery_vector_gt.ibin" #for roargraph build
+    result_prefix: "t2i"
+  - name: "txt"
+    data_file: "txt.fbin"
+    query_file: "img_query.fbin"
+    nonquery_file: "img_nonquery.fbin" #for roargraph build
+    set_gt_file: "i2t_set_gt.ibin"
+    vector_gt_file: "i2t_vector_gt.ibin"
+    nonquery_vector_gt_file: "i2t_nonquery_vector_gt.ibin" #for roargraph build
+    result_prefix: "i2t"
+multivector_sizes: [1, 2, 3, 4, 5]
+total_beam_widths: [20, 40, 80, 120, 160, 200, 400, 600, 800, 1000]
+aggregated_result_filename: "aggregated_results.txt"

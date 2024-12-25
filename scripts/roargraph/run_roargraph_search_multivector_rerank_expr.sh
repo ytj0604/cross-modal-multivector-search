@@ -1,161 +1,73 @@
 #!/bin/bash
 
-# Set paths and parameters
-# prefix=/mnt/dive/4/
-# roargraph_dir=/mnt/RoarGraph/build/
-# text_data=${prefix}/coco_test_4_txt_embs.fbin
-# image_data=${prefix}/coco_test_4_img_embs.fbin
-# result_dir=${prefix}/results/
+if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 config.yaml"
+    exit 1
+fi
 
-# if [ ! -d ${result_dir} ]; then
-#   mkdir -p ${result_dir}
-# fi
+config_file="$1"
 
-# num_threads=1
-# topk=20
+if [ ! -f "$config_file" ]; then
+    echo "Error: Configuration file '$config_file' does not exist."
+    exit 1
+fi
 
-# M_PJBP=${1:-35}
-# query_multivector_size=4
-# beam_width_budget=(20 40 80 120 160 200)
-# min_beam_width=5
-# max_beam_width=2000
+if ! command -v yq &> /dev/null; then
+    echo "Error: yq is not installed."
+    exit 1
+fi
 
-# evaluation_save_path=${prefix}/results/aggregated_results.txt
+# Load configuration values from the YAML file
+build_dir="$(dirname "$(realpath "$0")")/../../build/"
+base_path=$(yq e '.base_path' "$config_file")
+dist=$(yq e '.distance_metric' "$config_file")
+k=$(yq e '.k' "$config_file")
+data_types_length=$(yq e '.data_types | length' "$config_file")
+beam_width_budget=($(yq e '.total_beam_widths[]' "$config_file"))
+multivector_sizes=($(yq e '.multivector_sizes[]' "$config_file"))
 
-# # Function to run a single search experiment
-# run_search() {
-#   local query_data=$1
-#   local base_data=$2
-#   local index_name=$3
-#   local gt_path=$4
-#   local evaluation_save_prefix=$5
-#   local budget=$6
 
-#   ${roargraph_dir}/tests/test_search_multivector_roargraph --data_type float \
-#     --dist ip --base_data_path ${base_data} \
-#     --projection_index_save_path ${index_name} \
-#     --gt_path ${gt_path} \
-#     --query_path ${query_data} \
-#     --k ${topk} -T ${num_threads} \
-#     --max_pq ${max_beam_width} \
-#     --min_pq ${min_beam_width} \
-#     --max_pq_size_budget ${budget} \
-#     --evaluation_save_prefix ${evaluation_save_prefix} \
-#     --evaluation_save_path ${evaluation_save_path} \
-#     --query_multivector_size ${query_multivector_size}
-# }
+enable_adaptive_expansion=true  # Default setting, can toggle manually
+min_beam_width=5
 
-# # Run experiments for all 4 combinations
-# echo "Running search experiments with num_threads=${num_threads} and topk=${topk}..."
+timestamp=$(date +%Y%m%d%H%M)
 
-# for budget in "${beam_width_budget[@]}"; do
-#   echo "Testing with max_pq_size_budget=${budget}..."
+echo "Running search experiments with adaptive expansion set to ${enable_adaptive_expansion}"...
 
-#   # Image to Image (i2i)
-#   run_search ${image_data} ${image_data} \
-#     ${prefix}/i2i_Roar_${M_PJBP}.index \
-#     ${prefix}/i2i.gt.bin \
-#     ${result_dir}/i2i_Roar_${M_PJBP} \
-#     ${budget}
+for mvs in "${multivector_sizes[@]}"; do
+  for (( dt_idx=0; dt_idx<data_types_length; dt_idx++ )); do
+    datatype_name=$(yq e ".data_types[$dt_idx].name" "$config_file")
+    data_file=$(yq e ".data_types[$dt_idx].data_file" "$config_file")
+    query_file=$(yq e ".data_types[$dt_idx].query_file" "$config_file")
+    set_gt_file=$(yq e ".data_types[$dt_idx].set_gt_file" "$config_file")
+    result_prefix=$(yq e ".data_types[$dt_idx].result_prefix" "$config_file")
 
-#   # Text to Text (t2t)
-#   run_search ${text_data} ${text_data} \
-#     ${prefix}/t2t_Roar_${M_PJBP}.index \
-#     ${prefix}/t2t.gt.bin \
-#     ${result_dir}/t2t_Roar_${M_PJBP} \
-#     ${budget}
-
-#   # Text to Image (t2i)
-#   run_search ${text_data} ${image_data} \
-#     ${prefix}/t2i_Roar_${M_PJBP}.index \
-#     ${prefix}/t2i.gt.bin \
-#     ${result_dir}/t2i_Roar_${M_PJBP} \
-#     ${budget}
-
-#   # Image to Text (i2t)
-#   run_search ${image_data} ${text_data} \
-#     ${prefix}/i2t_Roar_${M_PJBP}.index \
-#     ${prefix}/i2t.gt.bin \
-#     ${result_dir}/i2t_Roar_${M_PJBP} \
-#     ${budget}
-# done
-# echo "Search experiments completed!"
-
-for i in {4..5}; do
-
-  # Set paths and parameters
-  prefix=/mnt/dive/${i}/
-  roargraph_dir=/mnt/RoarGraph/build/
-  text_data=${prefix}/coco_test_${i}_txt_embs.fbin
-  image_data=${prefix}/coco_test_${i}_img_embs.fbin
-  result_dir=${prefix}/result_temp/
-  gt_dir=/mnt/dive/ground_truth/
-
-  if [ ! -d ${result_dir} ]; then
+    path="${base_path}${mvs}/"
+    result_dir=${path}/result_roargrap_${enable_adaptive_expansion}_${timestamp}/
     mkdir -p ${result_dir}
-  fi
 
-  MKL_NUM_THREADS=1
-  num_threads=1
-  topk=10
+    index_path="${path}index/${datatype_name}_roargraph.index"
 
-  M_PJBP=${1:-35}
-  query_multivector_size=${i}
-  # beam_width_budget=(20 40 80 120 160 200 400 600 800 1000)
-  # beam_width_budget=(1500 2000 3000 5000)
-  beam_width_budget=(200)
-  min_beam_width=5
-  # max_beam_width=1000
-  enable_adaptive_expansion=true
+    for budget in "${beam_width_budget[@]}"; do
+      ${build_dir}/tests/test_search_multivector_rerank \
+        --data_type float \
+        --dist ${dist} \
+        --base_data_path ${path}/${data_file} \
+        --projection_index_save_path ${index_path} \
+        --query_path ${path}/${query_file} \
+        --k ${k} -T 1 \
+        --max_pq ${budget} \
+        --min_pq ${min_beam_width} \
+        --max_pq_size_budget ${budget} \
+        --evaluation_save_prefix ${result_dir}/${result_prefix}_roargraph_${budget} \
+        --evaluation_save_path ${result_dir}/aggregated_results.txt \
+        --query_multivector_size ${mvs} \
+        --enable_adaptive_expansion ${enable_adaptive_expansion} \
+        --set_gt_path ${path}/${set_gt_file}
 
-  evaluation_save_path=${result_dir}/aggregated_results.txt
-
-  # Function to run a single search experiment
-  run_search() {
-    local query_data=$1
-    local base_data=$2
-    local index_name=$3
-    local gt_path=$4
-    local evaluation_save_prefix=$5
-    local budget=$6
-    local set_gt_path=$7
-
-    ${roargraph_dir}/tests/test_search_multivector_rerank --data_type float \
-      --dist cosine --base_data_path ${base_data} \
-      --projection_index_save_path ${index_name} \
-      --gt_path ${gt_path} \
-      --query_path ${query_data} \
-      --k ${topk} -T ${num_threads} \
-      --max_pq ${budget} \
-      --min_pq ${min_beam_width} \
-      --max_pq_size_budget ${budget} \
-      --evaluation_save_prefix ${evaluation_save_prefix} \
-      --evaluation_save_path ${evaluation_save_path} \
-      --query_multivector_size ${query_multivector_size} \
-      --enable_adaptive_expansion ${enable_adaptive_expansion} \
-      --set_gt_path ${set_gt_path}
-  }
-
-  # Run experiments for all 4 combinations
-  echo "Running search experiments with num_threads=${num_threads} and topk=${topk}..."
-
-  for budget in "${beam_width_budget[@]}"; do
-    run_search ${text_data} ${image_data} \
-      ${prefix}/t2i_Roar_${M_PJBP}.index \
-      ${prefix}/t2i.gt.bin \
-      ${result_dir}/t2i_Roar_${M_PJBP} \
-      ${budget} \
-      ${gt_dir}/coco_test_${i}_txt_gts.ibin
+      echo "Completed search for ${result_prefix} with beam width ${budget}, multivector size ${mvs}"
+    done
   done
-
-  for budget in "${beam_width_budget[@]}"; do
-      run_search ${image_data} ${text_data} \
-      ${prefix}/i2t_Roar_${M_PJBP}.index \
-      ${prefix}/i2t.gt.bin \
-      ${result_dir}/i2t_Roar_${M_PJBP} \
-      ${budget} \
-      ${gt_dir}/coco_test_${i}_img_gts.ibin
-  done
-
-  echo "Search experiments completed!"
 done
+
+echo "Search experiments completed."

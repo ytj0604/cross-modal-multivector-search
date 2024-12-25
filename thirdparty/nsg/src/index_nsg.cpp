@@ -49,6 +49,7 @@ void IndexNSG::Load(const char *filename) {
   std::ifstream in(filename, std::ios::binary);
   in.read((char *)&width, sizeof(unsigned));
   in.read((char *)&ep_, sizeof(unsigned));
+  // std::cout << "width:" << width << " ep:" << ep_ << std::endl;
   // width=100;
   unsigned cc = 0;
   while (!in.eof()) {
