@@ -607,8 +607,9 @@ void RecallCalculator::SetGroundTruth(SetGroundTruthVectorPtr ground_truth) {
   this->ground_truth = ground_truth;
 }
 
+template <typename IDType>
 double RecallCalculator::ComputeRecall(
-    VectorSetID query_id, const std::vector<VectorSetID>& reranked_indices) {
+    VectorSetID query_id, const std::vector<IDType>& reranked_indices) {
   if (ground_truth == nullptr) {
     throw std::runtime_error("Ground truth not set.");
   }
@@ -624,8 +625,8 @@ double RecallCalculator::ComputeRecall(
         "k is greater than the number of ground truth items.");
   }
 
-  std::unordered_set<VectorSetID> gt_set(gt_for_this_query.begin(),
-                                         gt_for_this_query.begin() + k);
+  std::unordered_set<IDType> gt_set(gt_for_this_query.begin(),
+                                    gt_for_this_query.begin() + k);
 
   // Compute the number of relevant items in the top-k reranked indices
   uint32_t num_relevant = 0;
@@ -689,7 +690,8 @@ SetGroundTruthVectorPtr Loader::LoadGroundTruth(const std::string& file_path) {
                                      num_gt_per_query * sizeof(unsigned int);
 
   if (static_cast<std::size_t>(file_size) != expected_size) {
-    std::cerr << "File size does not match expected size.\n";
+    std::cerr << "File" << file_path;
+    std::cerr << " size does not match expected size.\n";
     std::cerr << "Expected size: " << expected_size
               << " bytes, but file size is " << file_size << " bytes.\n";
     throw std::runtime_error("Ground truth file size mismatch.");
@@ -837,6 +839,27 @@ GroundTruthMapping Loader::LoadQueryDataPairMappingAsFunction(
   };
 }
 
+void MultiVectorReranker::GetNNWiseDistance(std::vector<VectorID>& indices,
+                                            std::vector<float>& avg_distances) {
+  // The goal of this function is to compute the pairwise cosine similarity and
+  // return average for each vector. So, the query is the same as the data.
+
+  Matrix collected_data_mat(indices.size(), data_matrix.cols());
+  float* data = collected_data_mat.data();
+  // Memcpy the data to matrix.
+  for (size_t i = 0; i < indices.size(); ++i) {
+    auto vector_to_copy = data_matrix.data() + indices[i] * data_matrix.cols();
+    memcpy(data + i * data_matrix.cols(), vector_to_copy,
+           data_matrix.cols() * sizeof(float));
+  }
+  Matrix res(indices.size(), indices.size());
+  vector_distance_metric(collected_data_mat, collected_data_mat, res);
+  avg_distances.resize(indices.size());
+  for (size_t i = 0; i < indices.size(); ++i) {
+    avg_distances[i] = res.row(i).sum() / indices.size();
+  }
+}
+
 template void MultiVectorReranker::Rerank<unsigned int>(
     VectorSetID& query_id,
     const std::vector<std::vector<unsigned int>>& indices,
@@ -845,3 +868,10 @@ template void MultiVectorReranker::Rerank<unsigned int>(
 template void MultiVectorReranker::Rerank<size_t>(
     VectorSetID& query_id, const std::vector<std::vector<size_t>>& indices,
     std::vector<VectorSetID>& reranked_indices);
+
+template double RecallCalculator::ComputeRecall<VectorSetID>(
+    VectorSetID query_id, const std::vector<VectorSetID>& reranked_indices);
+    
+// For hnsw..
+template double RecallCalculator::ComputeRecall<size_t>(
+    VectorSetID query_id, const std::vector<size_t>& reranked_indices);

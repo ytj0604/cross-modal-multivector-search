@@ -77,7 +77,7 @@ class MultiVectorReranker {
   void GenerateVectorGroundTruth(const std::string& ground_truth_file);
   void SetGPUBatchSize(Cardinality batch_size);
   void SetUseGPU(bool use_gpu) { this->use_gpu = use_gpu; }
-
+  void GetNNWiseDistance(std::vector<VectorID>& indices, std::vector<float>& avg_distances);
  private:
   void SetQueryOnGPU(const Eigen::Ref<const Matrix>& query);
   float* SetDataBatchOnGPU(const Eigen::Ref<const Matrix>& data);
@@ -155,8 +155,9 @@ class RecallCalculator {
   // Set level gt.
   void SetGroundTruth(SetGroundTruthVectorPtr ground_truth);
   void SetPairedGroundTruth(GroundTruthMapping f) { paired_ground_truth = f; }
+  template <typename IDType>
   double ComputeRecall(VectorSetID query_id,
-                       const std::vector<VectorSetID>& reranked_indices);
+                       const std::vector<IDType>& reranked_indices);
   double ComputePairedRecall(VectorSetID query_id,
                              const std::vector<VectorSetID>& reranked_indices);
 

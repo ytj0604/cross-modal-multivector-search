@@ -36,11 +36,11 @@ int main(int argc, char **argv) {
   uint32_t k;
   std::string evaluation_save_path = "";
   std::string evaluation_save_prefix = "";
-  std::string set_gt_path = "";
+  std::string vector_gt_path = "";
   uint32_t max_pq;
   uint32_t min_pq;
   uint32_t max_pq_size_budget;
-  uint32_t query_multivector_size;
+  uint32_t query_multivector_size=1;
   bool enable_adaptive_expansion;
 
   po::options_description desc{"Arguments"};
@@ -100,14 +100,10 @@ int main(int argc, char **argv) {
         po::value<uint32_t>(&max_pq_size_budget)->default_value(10000),
         "max priority queue size budget");
     desc.add_options()(
-        "query_multivector_size",
-        po::value<uint32_t>(&query_multivector_size)->default_value(4),
-        "query multivector size");
-    desc.add_options()(
         "enable_adaptive_expansion",
         po::value<bool>(&enable_adaptive_expansion)->default_value(true),
         "enable adaptive expansion");
-    desc.add_options()("set_gt_path", po::value<std::string>(&set_gt_path),
+    desc.add_options()("vector_gt_path", po::value<std::string>(&vector_gt_path),
                        "set ground truth path");
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -231,19 +227,19 @@ int main(int argc, char **argv) {
   // Load the query and data embeddings to Eigen matrices
   auto query_matrix = Loader::LoadEmbeddingVector(query_file);
   auto data_matrix = Loader::LoadEmbeddingVector(base_data_file);
-  MultiVectorReranker reranker;
-  reranker.SetDataVector(data_matrix);
-  reranker.SetQueryVector(query_matrix);
-  reranker.SetQueryMultiVectorCardinality(query_multivector_size);
-  reranker.SetK(k);
-  reranker.SetDistanceMetric(
-      "smooth_chamfer", dist == "cosine" || dist == "ip" ? "cosine" : "l2");
-  reranker.SetVectorID2VectorSetIDMapping(
-      [&query_multivector_size](VectorID vid) -> VectorSetID {
-        return vid / query_multivector_size;
-      });
+  // MultiVectorReranker reranker;
+  // reranker.SetDataVector(data_matrix);
+  // reranker.SetQueryVector(query_matrix);
+  // reranker.SetQueryMultiVectorCardinality(query_multivector_size);
+  // reranker.SetK(k);
+  // reranker.SetDistanceMetric(
+  //     "smooth_chamfer", dist == "cosine" || dist == "ip" ? "cosine" : "l2");
+  // reranker.SetVectorID2VectorSetIDMapping(
+  //     [&query_multivector_size](VectorID vid) -> VectorSetID {
+  //       return vid / query_multivector_size;
+  //     });
 
-  auto set_level_ground_truth = Loader::LoadGroundTruth(set_gt_path);
+  auto set_level_ground_truth = Loader::LoadGroundTruth(vector_gt_path);
   RecallCalculator recall_calculator;
   recall_calculator.SetGroundTruth(set_level_ground_truth);
   recall_calculator.SetK(k);
@@ -297,7 +293,7 @@ int main(int argc, char **argv) {
         enable_adaptive_expansion);
     auto rerank_start = std::chrono::high_resolution_clock::now();
     unsigned int uint_query_index = (unsigned int)i;
-    reranker.Rerank(uint_query_index, indices, reranked_indices);
+    // reranker.Rerank(uint_query_index, indices, reranked_indices);
     // End timing for the individual query
     auto query_end = std::chrono::high_resolution_clock::now();
     auto rerank_diff = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -316,7 +312,7 @@ int main(int argc, char **argv) {
     total_graph_search_time += (query_time_seconds - rerank_time_seconds);
     total_rerank_time += rerank_time_seconds;
     double reranked_recall =
-        recall_calculator.ComputeRecall(i, reranked_indices);
+        recall_calculator.ComputeRecall(i, indices[0]);
     total_recall += reranked_recall;
 
 #pragma omp critical

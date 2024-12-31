@@ -20,5 +20,5 @@ data_types:
     nonquery_vector_gt_file: "i2t_nonquery_vector_gt.ibin" #for roargraph build
     result_prefix: "i2t"
 multivector_sizes: [1, 2, 3, 4, 5]
-total_beam_widths: [20, 40, 80, 120, 160, 200, 400, 600, 800, 1000]
+total_beam_widths: [10, 50, 120]
 aggregated_result_filename: "aggregated_results.txt"

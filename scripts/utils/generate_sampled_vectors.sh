@@ -16,5 +16,4 @@ for i in {1..5}; do
     ${base_path}${i}/txt.fbin \
     ${base_path}${i}/txt_query.fbin \
     ${base_path}${i}/txt_nonquery.fbin
-
 done

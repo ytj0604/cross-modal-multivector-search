@@ -39,7 +39,7 @@ for mvs in "${multivector_sizes[@]}"; do
     datatype_name=$(yq e ".data_types[$dt_idx].name" "$config_file")
     data_file=$(yq e ".data_types[$dt_idx].data_file" "$config_file")
     query_file=$(yq e ".data_types[$dt_idx].query_file" "$config_file")
-    set_gt_file=$(yq e ".data_types[$dt_idx].set_gt_file" "$config_file")
+    gt_file=$(yq e ".data_types[$dt_idx].vector_gt_file" "$config_file")
     result_prefix=$(yq e ".data_types[$dt_idx].result_prefix" "$config_file")
 
     path="${base_path}${mvs}/"
@@ -49,7 +49,7 @@ for mvs in "${multivector_sizes[@]}"; do
     index_path="${path}index/${datatype_name}_roargraph.index"
 
     for budget in "${beam_width_budget[@]}"; do
-      ${build_dir}/tests/test_search_multivector_rerank \
+      ${build_dir}/tests/test_search_singlevector_rerank \
         --data_type float \
         --dist ${dist} \
         --base_data_path ${path}/${data_file} \
@@ -61,9 +61,8 @@ for mvs in "${multivector_sizes[@]}"; do
         --max_pq_size_budget ${budget} \
         --evaluation_save_prefix ${result_dir}/${result_prefix}_roargraph_${budget} \
         --evaluation_save_path ${result_dir}/aggregated_results.txt \
-        --query_multivector_size ${mvs} \
         --enable_adaptive_expansion ${enable_adaptive_expansion} \
-        --set_gt_path ${path}/${set_gt_file}
+        --vector_gt_path ${path}/${gt_file}
 
       echo "Completed search for ${result_prefix} with beam width ${budget}, multivector size ${mvs}"
     done

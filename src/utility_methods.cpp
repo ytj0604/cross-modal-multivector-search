@@ -1,9 +1,9 @@
 #include <utility_methods.h>
 
+#include <condition_variable>
 #include <mutex>
 #include <random>
 #include <thread>
-#include <condition_variable>
 
 void UtilityMethods::TestKNNSignificance(SetGroundTruthVectorPtr sgt,
                                          VectorGroundTruthVectorPtr vgt_,
@@ -153,110 +153,12 @@ std::vector<float> UtilityMethods::generate_normalized_vector(int d) {
   return vec;
 }
 
-// void UtilityMethods::TestCosineSimilarityDist(MatrixType query_vector,
-//                                               MatrixType data_vector,
-//                                               std::string output_file_path) {
-//   const int num_query_to_test = 1;
-//   const uint32_t num_division = 200;
-//   const double total_angle = 2.0;  // Cosine similarity range: -1 to 1
-
-//   std::ofstream file(output_file_path);
-//   if (!file.is_open()) {
-//     std::cerr << "[Error] Unable to open output file: " << output_file_path
-//               << "\n";
-//     return;
-//   }
-//   std::cout << "[Info] Computing cosine similarity distances using "
-//             << std::thread::hardware_concurrency() << " threads...\n";
-
-//   // Limit the number of query vectors
-//   size_t num_query_vectors =
-//       std::min((size_t)num_query_to_test, (size_t)query_vector.rows());
-
-//   // Global histogram to store the results
-//   std::vector<double> global_divisions(num_division, 0.0);
-//   std::mutex histogram_mutex;
-//   std::atomic<size_t> processed_queries(0);
-
-//   auto process_chunk = [&](size_t start, size_t end) {
-//     std::vector<double> local_divisions(num_division, 0.0);
-
-//     for (size_t i = start; i < end; ++i) {
-//       // Extract the current query vector
-//       auto query = query_vector.row(i);
-
-//       // Compute cosine similarity for the current query with all data vectors
-//       auto cosine_chunk_ = query * data_vector.transpose();
-//       auto cosine_chunk = cosine_chunk_.eval();
-
-//       // Update the histogram for the current query
-//       for (int j = 0; j < cosine_chunk.cols(); ++j) {
-//         if (j % 1000 == 0) {
-//           std::lock_guard<std::mutex> lock(histogram_mutex);
-//           std::cout << "[Progress] Processed " << j << " / " << cosine_chunk.cols()
-//                     << ".\n";
-//         }
-//         double cosine = cosine_chunk(0, j);  // Since `query` is a single row
-//         int slot =
-//             static_cast<int>((cosine + 1.0) / total_angle * num_division);
-//         if (slot >= 0 && slot < num_division) {
-//           local_divisions[slot]++;
-//         }
-//       }
-
-//       // Update progress
-//       size_t current_progress = ++processed_queries;
-//       if (current_progress % 10 == 0) {  // Print progress every 10 queries
-//         std::cout << "[Progress] Processed " << current_progress << " / "
-//                   << num_query_vectors << " queries.\n";
-//       }
-//     }
-
-//     // Merge local histogram into the global histogram
-//     {
-//       std::lock_guard<std::mutex> lock(histogram_mutex);
-//       for (size_t i = 0; i < num_division; ++i) {
-//         global_divisions[i] += local_divisions[i];
-//       }
-//     }
-//   };
-
-//   // Divide queries among threads
-//   std::vector<std::thread> threads;
-//   size_t num_threads = std::thread::hardware_concurrency();
-//   size_t chunk_size = (num_query_vectors + num_threads - 1) / num_threads;
-
-//   for (size_t t = 0; t < num_threads; ++t) {
-//     size_t start = t * chunk_size;
-//     size_t end = std::min(start + chunk_size, num_query_vectors);
-//     if (start < end) {
-//       threads.emplace_back(process_chunk, start, end);
-//     }
-//   }
-
-//   // Wait for all threads to finish
-//   for (auto &thread : threads) {
-//     thread.join();
-//   }
-
-//   // Write results to the file
-//   for (int i = 0; i < num_division; i++) {
-//     file << global_divisions[i] << ",";
-//   }
-//   file.close();
-//   std::cout << "[Info] Cosine similarity distances written to "
-//             << output_file_path << "\n";
-// }
 void UtilityMethods::TestCosineSimilarityDist(Matrix query_vector,
                                               Matrix data_vector,
                                               std::string output_file_path) {
-  const int num_query_to_test = 400;
+  const int num_query_to_test = 10000;
   const uint32_t num_division = 200;
   const double total_angle = 2.0;  // Cosine similarity range: -1 to 1
-
-  std::mutex file_mutex;
-  std::condition_variable cv;
-  std::atomic<size_t> next_chunk_to_write(0);
 
   std::ofstream file(output_file_path);
   if (!file.is_open()) {
@@ -271,8 +173,14 @@ void UtilityMethods::TestCosineSimilarityDist(Matrix query_vector,
   size_t num_query_vectors =
       std::min((size_t)num_query_to_test, (size_t)query_vector.rows());
 
-  auto process_chunk = [&](size_t chunk_index, size_t start, size_t end) {
-    std::ostringstream local_output;
+  // Global histogram to store the results
+  std::vector<double> global_divisions(num_division, 0.0);
+  std::mutex histogram_mutex;
+  std::atomic<size_t> processed_queries(0);
+
+  auto process_chunk = [&](size_t start, size_t end) {
+    std::vector<double> local_divisions(num_division, 0.0);
+
     for (size_t i = start; i < end; ++i) {
       // Extract the current query vector
       auto query = query_vector.row(i);
@@ -281,36 +189,35 @@ void UtilityMethods::TestCosineSimilarityDist(Matrix query_vector,
       auto cosine_chunk_ = query * data_vector.transpose();
       auto cosine_chunk = cosine_chunk_.eval();
 
-      // Create a histogram for the current query
-      std::vector<double> divisions(num_division, 0.0);
-
-      // Populate the histogram
+      // Update the histogram for the current query
       for (int j = 0; j < cosine_chunk.cols(); ++j) {
+        // if (j % 1000 == 0) {
+        //   std::lock_guard<std::mutex> lock(histogram_mutex);
+        //   // std::cout << "[Progress] Processed " << j << " / "
+        //   //           << cosine_chunk.cols() << ".\n";
+        // }
         double cosine = cosine_chunk(0, j);  // Since `query` is a single row
         int slot =
             static_cast<int>((cosine + 1.0) / total_angle * num_division);
         if (slot >= 0 && slot < num_division) {
-          divisions[slot]++;
+          local_divisions[slot]++;
         }
       }
 
-      // Store the histogram in the local output stream
-      for (size_t d = 0; d < divisions.size(); ++d) {
-        local_output << divisions[d];
-        if (d < divisions.size() - 1) {
-          local_output << ",";
-        }
+      // Update progress
+      size_t current_progress = ++processed_queries;
+      if (current_progress % 100 == 0) {  // Print progress every 10 queries
+        std::cout << "[Progress] Processed " << current_progress << " / "
+                  << num_query_vectors << " queries.\n";
       }
-      local_output << "\n";  // End the line for the current query
     }
 
-    // Write the local output to the global file in the correct order
+    // Merge local histogram into the global histogram
     {
-      std::unique_lock<std::mutex> lock(file_mutex);
-      cv.wait(lock, [&] { return next_chunk_to_write == chunk_index; });
-      file << local_output.str();
-      ++next_chunk_to_write;
-      cv.notify_all();
+      std::lock_guard<std::mutex> lock(histogram_mutex);
+      for (size_t i = 0; i < num_division; ++i) {
+        global_divisions[i] += local_divisions[i];
+      }
     }
   };
 
@@ -323,7 +230,7 @@ void UtilityMethods::TestCosineSimilarityDist(Matrix query_vector,
     size_t start = t * chunk_size;
     size_t end = std::min(start + chunk_size, num_query_vectors);
     if (start < end) {
-      threads.emplace_back(process_chunk, t, start, end);
+      threads.emplace_back(process_chunk, start, end);
     }
   }
 
@@ -332,7 +239,101 @@ void UtilityMethods::TestCosineSimilarityDist(Matrix query_vector,
     thread.join();
   }
 
+  // Write results to the file
+  for (int i = 0; i < num_division; i++) {
+    file << global_divisions[i] << ",";
+  }
   file.close();
   std::cout << "[Info] Cosine similarity distances written to "
             << output_file_path << "\n";
 }
+
+// void UtilityMethods::TestCosineSimilarityDist(Matrix query_vector,
+//                                               Matrix data_vector,
+//                                               std::string output_file_path) {
+//   const int num_query_to_test = 400;
+//   const uint32_t num_division = 200;
+//   const double total_angle = 2.0;  // Cosine similarity range: -1 to 1
+
+//   std::mutex file_mutex;
+//   std::condition_variable cv;
+//   std::atomic<size_t> next_chunk_to_write(0);
+
+//   std::ofstream file(output_file_path);
+//   if (!file.is_open()) {
+//     std::cerr << "[Error] Unable to open output file: " << output_file_path
+//               << "\n";
+//     return;
+//   }
+//   std::cout << "[Info] Computing cosine similarity distances using "
+//             << std::thread::hardware_concurrency() << " threads...\n";
+
+//   // Limit the number of query vectors
+//   size_t num_query_vectors =
+//       std::min((size_t)num_query_to_test, (size_t)query_vector.rows());
+
+//   auto process_chunk = [&](size_t chunk_index, size_t start, size_t end) {
+//     std::ostringstream local_output;
+//     for (size_t i = start; i < end; ++i) {
+//       // Extract the current query vector
+//       auto query = query_vector.row(i);
+
+//       // Compute cosine similarity for the current query with all data
+//       vectors auto cosine_chunk_ = query * data_vector.transpose(); auto
+//       cosine_chunk = cosine_chunk_.eval();
+
+//       // Create a histogram for the current query
+//       std::vector<double> divisions(num_division, 0.0);
+
+//       // Populate the histogram
+//       for (int j = 0; j < cosine_chunk.cols(); ++j) {
+//         double cosine = cosine_chunk(0, j);  // Since `query` is a single row
+//         int slot =
+//             static_cast<int>((cosine + 1.0) / total_angle * num_division);
+//         if (slot >= 0 && slot < num_division) {
+//           divisions[slot]++;
+//         }
+//       }
+
+//       // Store the histogram in the local output stream
+//       for (size_t d = 0; d < divisions.size(); ++d) {
+//         local_output << divisions[d];
+//         if (d < divisions.size() - 1) {
+//           local_output << ",";
+//         }
+//       }
+//       local_output << "\n";  // End the line for the current query
+//     }
+
+//     // Write the local output to the global file in the correct order
+//     {
+//       std::unique_lock<std::mutex> lock(file_mutex);
+//       cv.wait(lock, [&] { return next_chunk_to_write == chunk_index; });
+//       file << local_output.str();
+//       ++next_chunk_to_write;
+//       cv.notify_all();
+//     }
+//   };
+
+//   // Divide queries among threads
+//   std::vector<std::thread> threads;
+//   size_t num_threads = std::thread::hardware_concurrency();
+//   size_t chunk_size = (num_query_vectors + num_threads - 1) / num_threads;
+
+//   for (size_t t = 0; t < num_threads; ++t) {
+//     size_t start = t * chunk_size;
+//     size_t end = std::min(start + chunk_size, num_query_vectors);
+//     if (start < end) {
+//       threads.emplace_back(process_chunk, t, start, end);
+//     }
+//   }
+
+//   // Wait for all threads to finish
+//   for (auto &thread : threads) {
+//     thread.join();
+//   }
+
+//   file.close();
+//   std::cout << "[Info] Cosine similarity distances written to "
+//             << output_file_path << "\n";
+// }
